@@ -42,7 +42,7 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("pandas==2.2.2", "numpy==1.26.4", "scipy", "statsmodels",
                  "networkx", "pyEDM==2.4.0")
-    .add_local_python_source("ccm_full_pipeline")
+    .add_local_python_source("ccm_forecast_core")
     .add_local_python_source("config")
 )
 
@@ -78,7 +78,7 @@ def _edge_path(cause, effect):
 @app.function(image=image, volumes={DATA_ROOT: volume}, cpu=1.0, memory=2048,
               timeout=3 * 3600, retries=3)
 def run_one_edge(cause_lake: str, effect_lake: str, n_surrogates: int) -> str:
-    import ccm_full_pipeline as p
+    import ccm_forecast_core as p
 
     p.PKL_DIR = PKL_DIR_REMOTE
     p.OUT_DIR = OUT_DIR
@@ -125,7 +125,7 @@ def merge_edges() -> dict:
     import numpy as np
     import pandas as pd
     from scipy import stats
-    import ccm_full_pipeline as p
+    import ccm_forecast_core as p
 
     p.OUT_DIR = OUT_DIR
 

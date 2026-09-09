@@ -91,7 +91,7 @@ from shapely.prepared import prep
 # --------------------------------------------------------------------------- CONFIG
 HYDAT_DB = "/data/Hydat.sqlite3"
 # resolved via glob at runtime (see resolve_hydrolakes_path) to match the
-# nested-folder layout ccm_modal_app.py already uses on the "ccm-data"
+# nested-folder layout modal_build_lake_panels.py already uses on the "ccm-data"
 # volume (HydroLAKES_polys_v10_shp/**/*.shp) -- HydroLAKES is very likely
 # ALREADY on that volume from your existing pipeline, no re-upload needed.
 HYDROLAKES_POLY_SHP = None
@@ -113,7 +113,7 @@ def resolve_hydrolakes_path(data_root="/data"):
 START_YEAR, END_YEAR = 1994, 2024
 WL_COMPLETENESS_MIN = 0.90
 RF_COMPLETENESS_MIN = 0.90
-MAX_DIST_DEG = 0.05             # matches ccm_lib.py's resolve_hylak_id max_dist_deg convention
+MAX_DIST_DEG = 0.05             # matches data_acquisition_lib.py's resolve_hylak_id max_dist_deg convention
 MAX_OUTLET_DIST_KM = 100.0      # upper bound only -- no lower floor
 DRAINAGE_RATIO_LOW = 0.85
 DRAINAGE_RATIO_HIGH = 1.20
@@ -122,8 +122,8 @@ TIGHT_RATIO_HIGH = 1.05
 HYDROLAKES_NATURAL_TYPES = (1, 3)
 SMALL_AREA_WARN_KM2 = 5.0       # flag suspiciously tiny resolved matches for manual review
 
-# Known cross-border-lake blind spot (same issue documented in ccm_lib.py /
-# ccm_modal_app.py's LAKE_RESOLVE_COUNTRY): HydroLAKES tags a shared lake's
+# Known cross-border-lake blind spot (same issue documented in data_acquisition_lib.py /
+# modal_build_lake_panels.py's LAKE_RESOLVE_COUNTRY): HydroLAKES tags a shared lake's
 # ENTIRE polygon under a single Country value. If that value isn't "Canada"
 # (e.g. Lake Huron -> "United States of America", Hylak_id=8, 59399 km^2),
 # a Canada-only filter misses the real polygon and falls back to a tiny,
@@ -201,7 +201,7 @@ def find_stations_on_natural_lakes(poly_shp_path, stations, h_range):
 
     IMPORTANT: resolution must consider ALL Canada polygons (any Lake_type),
     not just type-1/3 ones, and pick containment-first / nearest-second --
-    mirroring ccm_lib.py's resolve_hylak_id(). An earlier version of this
+    mirroring data_acquisition_lib.py's resolve_hylak_id(). An earlier version of this
     script pre-filtered to type in {1,3} before matching, which is wrong:
     if a station's true, correct polygon is a type=2 reservoir (e.g. Tobin
     Lake, Sugar Lake Reservoir, Coquitlam Lake -- all independently verified
@@ -490,11 +490,11 @@ def run():
 
 # --------------------------------------------------------------------------- Modal wrapper
 #
-# Reuses your EXISTING "ccm-data" volume from ccm_modal_app.py -- HydroLAKES
+# Reuses your EXISTING "ccm-data" volume from modal_build_lake_panels.py -- HydroLAKES
 # is almost certainly already uploaded there (its own docstring's setup step
 # puts it at HydroLAKES_polys_v10_shp/ on that volume). The only new upload
-# this script needs is Hydat.sqlite3, which nothing in ccm_modal_app.py /
-# ccm_lib.py currently references:
+# this script needs is Hydat.sqlite3, which nothing in modal_build_lake_panels.py /
+# data_acquisition_lib.py currently references:
 #
 #   modal volume put ccm-data <local-path> Hydat.sqlite3
 #

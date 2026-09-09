@@ -5,7 +5,7 @@ Directory order follows the single official reproduction route.
 | Directory | Role |
 | --- | --- |
 | `00_data_generation/` | Modal data acquisition, lake screening, panel construction and corrected embedding parameters |
-| `01_shared/` | shared modelling library imported by Modal jobs and post-processing scripts |
+| `01_shared/` | CCM and forecasting core imported by Modal jobs and post-processing scripts |
 | `02_within_lake_ccm/` | Modal within-lake CCM with one JSON shard per directed edge |
 | `03_inter_lake_ccm/` | Modal between-lake CCM with one JSON shard per directed edge |
 | `04_forecast/` | Modal forecasting with server-side orchestration |

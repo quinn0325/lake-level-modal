@@ -57,7 +57,7 @@ import pandas as pd
 
 CODE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_DIR / "01_shared"))
-import ccm_full_pipeline as p                                    # noqa: E402
+import ccm_forecast_core as p                                    # noqa: E402
 
 p.log = lambda msg: None
 

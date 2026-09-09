@@ -13,12 +13,12 @@ Vaseux 关系最多而 Skaha 一条都没有，以及 4 例同月与 2 例逆序
 
 约定
 ----
-· d 的符号约定与 ccm_full_pipeline 一致：d > 0 表示原因领先效应。
+· d 的符号约定与 ccm_forecast_core 一致：d > 0 表示原因领先效应。
   （相对 Ye et al. 2015 的 ℓ，本文 d = −ℓ。）
 · 数据源为 ch4_tables/T5_within_lake_edges.csv（420 条），出自
   2026-08-31 重跑结果。
 · statistically_significant 字段本身已包含收敛诊断，见
-  ccm_full_pipeline.apply_fdr_and_causal_evidence，因此不必再取一次交集。
+  ccm_forecast_core.apply_fdr_and_causal_evidence，因此不必再取一次交集。
 
 输出
 ----

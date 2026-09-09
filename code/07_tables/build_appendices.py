@@ -26,7 +26,7 @@ import pandas as pd
 
 CODE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE / "01_shared"))
-import ccm_full_pipeline as p                                   # noqa: E402
+import ccm_forecast_core as p                                   # noqa: E402
 
 p.log = lambda msg: None
 
@@ -45,7 +45,7 @@ SYSTEM_OF = {lk: n for n, g in SYSTEMS for lk in g}
 LABEL = {lk: lk.replace("_Lake", "").replace("_", " ") for lk in LAKES}
 LABEL["Lake_of_the_Woods"] = "Lake of the Woods"
 
-# 取自 ccm_modal_app.py 的 REGULATION_STATIONS / REGULATION_SUBPERIODS
+# 取自 modal_build_lake_panels.py 的 REGULATION_STATIONS / REGULATION_SUBPERIODS
 REGFLOW_STATIONS = {
     "Kalamalka_Lake": ["08NM065"], "Okanagan_Lake": ["08NM050"],
     "Skaha_Lake": ["08NM002"], "Vaseux_Lake": ["08NM247"],

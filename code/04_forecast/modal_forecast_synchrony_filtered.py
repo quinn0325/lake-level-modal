@@ -49,7 +49,7 @@ from pathlib import Path
 
 import modal
 
-# add_local_python_source 靠本地 import 解析；ccm_full_pipeline 位于 code/01_shared/
+# add_local_python_source 靠本地 import 解析；ccm_forecast_core 位于 code/01_shared/
 _CODE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_CODE_DIR / "01_shared"))
 sys.path.insert(0, str(_CODE_DIR))
@@ -83,7 +83,7 @@ image = (
         "VECLIB_MAXIMUM_THREADS": "1",
         "PYTHONHASHSEED": "0",
     })
-    .add_local_python_source("ccm_full_pipeline")
+    .add_local_python_source("ccm_forecast_core")
 )
 
 volume = modal.Volume.from_name("ccm-data", create_if_missing=False)
@@ -110,7 +110,7 @@ OUTPUT_NAMES = {
 
 
 def _configure_module():
-    import ccm_full_pipeline as p
+    import ccm_forecast_core as p
 
     p.PKL_DIR = f"{DATA_ROOT}/lake_results"
     p.OUT_DIR = OUT_DIR

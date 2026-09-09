@@ -4,9 +4,9 @@ Everything downstream of data acquisition lives here. The stage scripts in
 02_/03_/04_ are thin wrappers that parallelise calls into this module, so if two
 stages ever disagree about how a panel is built, the bug is in here.
 
-Entry point is a `{lake}_result.pkl` written by ccm_modal_app.process_lake_modal,
+Entry point is a `{lake}_result.pkl` written by modal_build_lake_panels.process_lake_modal,
 holding wide_wl and real_predictors. ERA5 download and catchment masking are not
-duplicated here -- they live in ccm_lib.py and need CDS credentials plus the
+duplicated here -- they live in data_acquisition_lib.py and need CDS credentials plus the
 HydroLAKES/HydroBASINS shapefiles.
 
 Design decisions that change how results should be read
@@ -521,7 +521,7 @@ def test_one_ccm_edge(panel, cause_col, effect_col, E_eff, tau_eff, n_surrogates
 
 def lag_scan(panel_df, cause, effect, embed_params, lags=None, seed=0):
     """只用来给"间接祖先但没有直接显著边"的变量挑一个结构上最优的滞后，不是显著性
-    检验。跟ccm_lib.py::lag_scan逐字一致(非embedded写法，pyEDM自己内部做嵌入)。"""
+    检验。跟 data_acquisition_lib.py::lag_scan 逐字一致(非embedded写法，pyEDM自己内部做嵌入)。"""
     if lags is None:
         lags = CCM_LAGS if "CCM_LAGS" in globals() else range(-12, 13)
     import pyEDM
@@ -1428,7 +1428,7 @@ def load_neighbor_wl_series(neighbor_lake_name):
     return deseasonalize(combined_wl, train_end=train_end)
 if __name__ == "__main__":
     raise SystemExit(
-        "ccm_full_pipeline.py 是共享库，不应直接运行。论文结果的产出入口：\n"
+        "ccm_forecast_core.py 是共享库，不应直接运行。论文结果的产出入口：\n"
         "  湖内 CCM   modal run code/02_within_lake_ccm/run_within_lake_ccm.py\n"
         "  湖间 CCM   modal run code/03_inter_lake_ccm/run_inter_lake_ccm.py\n"
         "  条件预测   modal run --detach code/04_forecast/modal_forecast_synchrony_filtered.py::detached"

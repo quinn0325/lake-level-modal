@@ -14,7 +14,7 @@ Modal Volume 中 `lake_results/*_result.pkl` 里缓存的 `embed_params` 由数�
 本脚本不回写 PKL——PKL 内还存着 `wide_wl` / `real_predictors` 等原始数据，
 回写有损坏风险。改为写出独立 JSON，便于与旧值逐项对照审计。
 
-本次同时固定 τ=1（见 config.EMBED_TAU 与 ccm_lib.get_embedding_params 的说明），
+本次同时固定 τ=1（见 config.EMBED_TAU 与 data_acquisition_lib.get_embedding_params 的说明），
 因此实际只需重算 E。
 
 跑法
@@ -38,17 +38,17 @@ from pathlib import Path
 import modal
 
 CODE_DIR = Path(__file__).resolve().parent                  # code/00_data_generation
-sys.path.insert(0, str(CODE_DIR))                            # ccm_lib
+sys.path.insert(0, str(CODE_DIR))                            # data_acquisition_lib
 sys.path.insert(0, str(CODE_DIR.parent))                     # config
-sys.path.insert(0, str(CODE_DIR.parent / "01_shared"))       # ccm_full_pipeline
+sys.path.insert(0, str(CODE_DIR.parent / "01_shared"))       # ccm_forecast_core
 
 app = modal.App("recompute-embed-params")
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("pandas==2.2.2", "numpy==1.26.4", "scipy", "networkx", "pyEDM==2.4.0")
-    .add_local_python_source("ccm_lib")
-    .add_local_python_source("ccm_full_pipeline")
+    .add_local_python_source("data_acquisition_lib")
+    .add_local_python_source("ccm_forecast_core")
     .add_local_python_source("config")
 )
 
@@ -69,29 +69,29 @@ def recompute_one_lake(lake: str) -> dict:
     import pandas as pd
 
     import config
-    import ccm_full_pipeline as p
+    import ccm_forecast_core as p
 
-    # 不能直接 import ccm_lib：它在模块级 import geopandas / shapely / requests
-    # 以及 ccm_modal_app（选湖与数据下载用），本作业一个都不需要。
+    # 不能直接 import data_acquisition_lib：它在模块级 import geopandas / shapely / requests
+    # 以及 modal_build_lake_panels（选湖与数据下载用），本作业一个都不需要。
     # 改为用 AST 从源文件原样抽取所需的三个函数后执行——保证与正式实现逐字一致，
     # 不重新实现，也不触发重依赖。
     import ast as _ast
     _ns = {"np": np, "pd": pd, "pyEDM": __import__("pyEDM")}
-    # ccm_lib.py 的位置：Modal 容器里由 add_local_python_source 放在 /root/；
+    # data_acquisition_lib.py 的位置：Modal 容器里由 add_local_python_source 放在 /root/；
     # 本地运行时与本文件同目录。两种情形都要能找到，否则本地跑会 FileNotFoundError。
-    _cands = ["/root/ccm_lib.py", str(CODE_DIR / "ccm_lib.py")]
+    _cands = ["/root/data_acquisition_lib.py", str(CODE_DIR / "data_acquisition_lib.py")]
     _lib = next((c for c in _cands if os.path.exists(c)), None)
-    assert _lib, f"找不到 ccm_lib.py，已查找: {_cands}"
+    assert _lib, f"找不到 data_acquisition_lib.py，已查找: {_cands}"
     _src = open(_lib, encoding="utf-8").read()
     _want = {"simplex_self_predict_rho", "select_E", "get_embedding_params",
              "_config_embed_tau", "_config_embed_E_candidates"}
     _got = set()
     for _n in _ast.parse(_src).body:
         if isinstance(_n, _ast.FunctionDef) and _n.name in _want:
-            exec(compile(_ast.Module([_n], []), "ccm_lib.py", "exec"), _ns)
+            exec(compile(_ast.Module([_n], []), "data_acquisition_lib.py", "exec"), _ns)
             _got.add(_n.name)
     missing = _want - _got
-    assert not missing, f"未能从 ccm_lib.py 抽取: {missing}"
+    assert not missing, f"未能从 data_acquisition_lib.py 抽取: {missing}"
 
     p.PKL_DIR = PKL_DIR_REMOTE
 

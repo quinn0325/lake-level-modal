@@ -21,7 +21,7 @@ reproduction route.
 ```text
 code/
   00_data_generation/       Modal source-data acquisition and panel building
-  01_shared/                shared modelling library used inside Modal jobs
+  01_shared/                CCM and forecasting core used inside Modal jobs
   02_within_lake_ccm/       Modal within-lake CCM, 420 directed edges
   03_inter_lake_ccm/        Modal between-lake CCM, 90 directed edges
   04_forecast/              Modal forecasting, server-side orchestration
@@ -85,8 +85,8 @@ Run all commands from the repository root.
 ### 1. Build Monthly Lake Panels On Modal
 
 ```bash
-modal run code/00_data_generation/ccm_modal_app.py::fetch_only
-modal run code/00_data_generation/ccm_modal_app.py::process_only
+modal run code/00_data_generation/modal_build_lake_panels.py::fetch_only
+modal run code/00_data_generation/modal_build_lake_panels.py::process_only
 ```
 
 Expected Modal Volume outputs:

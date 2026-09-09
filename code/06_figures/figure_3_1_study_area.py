@@ -127,14 +127,14 @@ REG_STATIONS = {
     "Playgreen_Lake": ["05UB009"], "Kiskitto_Lake": ["05UB009"],
     "Sipiwesk_Lake": ["05UE005"], "Split_Lake": ["05UF006"],
 }
-# 与 00_data_generation/ccm_modal_app.py 的 REGULATION_STATIONS 保持一致。
+# 与 00_data_generation/modal_build_lake_panels.py 的 REGULATION_STATIONS 保持一致。
 # 曾把 Split_Lake 误写为 05UF003——那是该湖的**水位站**，调控站是下游的
 # Kettle 发电站 05UF006，抄错会使调控站三角形叠到水位站圆点上、看起来少一个。
 # 下面在导入时校验一次，不一致即报错。
 def _verify_reg_stations():
     import re
     src = (Path(__file__).resolve().parents[1] /
-           "00_data_generation" / "ccm_modal_app.py").read_text(encoding="utf-8")
+           "00_data_generation" / "modal_build_lake_panels.py").read_text(encoding="utf-8")
     blk = src[src.index("REGULATION_STATIONS = {"):]
     blk = blk[:blk.index("\n}") + 2]
     truth = {k: eval(v) for k, v in

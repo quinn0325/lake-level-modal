@@ -5,8 +5,8 @@
 
 用法
 ----
-    modal run code/00_data_generation/ccm_modal_app.py::fetch_only
-    modal run code/00_data_generation/ccm_modal_app.py::process_only
+    modal run code/00_data_generation/modal_build_lake_panels.py::fetch_only
+    modal run code/00_data_generation/modal_build_lake_panels.py::process_only
 
 分两步手动执行：
   1. fetch_era5_modal   低并发预下载 ERA5 并缓存到 Volume
@@ -39,7 +39,8 @@ image = (
         "pmdarima", "statsmodels", "networkx", "xarray", "netcdf4",
         "cdsapi", "matplotlib", "pyEDM", "scipy", "xgboost",
     )
-    .add_local_python_source("ccm_lib")  # 显式把ccm_lib.py打进镜像，不依赖自动挂载
+    .add_local_python_source("modal_build_lake_panels")  # data_acquisition_lib 会读取这里的配置常量
+    .add_local_python_source("data_acquisition_lib")  # 显式打进镜像，不依赖自动挂载
 )
 
 volume = modal.Volume.from_name("ccm-data", create_if_missing=True)
@@ -151,7 +152,7 @@ def fetch_era5_modal(lake_name: str) -> dict:
     ERA5_DIR = Path(DATA_ROOT) / "era5_downloads"
     ERA5_DIR.mkdir(exist_ok=True, parents=True)
 
-    from ccm_lib import resolve_lake_area_bbox, fetch_era5_land_monthly
+    from data_acquisition_lib import resolve_lake_area_bbox, fetch_era5_land_monthly
 
     hydrolakes_matches = glob.glob(str(Path(DATA_ROOT) / "HydroLAKES_polys_v10_shp" / "**" / "*.shp"), recursive=True)
     hydrobasins_matches = glob.glob(str(Path(DATA_ROOT) / "hybas_na_lev12_v1c" / "*.shp"))
@@ -258,7 +259,7 @@ def process_lake_modal(lake_name: str) -> dict:
     hydrolakes_gdf = gpd.read_file(hydrolakes_matches[0])
     hydrobasins_gdf = gpd.read_file(hydrobasins_matches[0])
 
-    from ccm_lib import fetch_lake_water_level, fetch_lake_regulation_flow, resolve_lake_area_bbox, \
+    from data_acquisition_lib import fetch_lake_water_level, fetch_lake_regulation_flow, resolve_lake_area_bbox, \
         try_fetch_era5_land, extract_masked_series, \
         convert_era5_units, build_variable_panel, get_embedding_params
 
@@ -331,7 +332,7 @@ def process_lake_modal(lake_name: str) -> dict:
             return result
 
         available_vars = [v for v in VARS if v in ccm_train_panel.columns]
-        # 传完整日历序列、保留真实 NaN，不要 dropna（原因见 ccm_lib.py 文件头）。
+        # 传完整日历序列、保留真实 NaN，不要 dropna（原因见 data_acquisition_lib.py 文件头）。
         embed_params = {v: get_embedding_params(ccm_train_panel[v].values, v, verbose=False) for v in available_vars}
         # 这个阶段只负责把面板和嵌入参数存进 pkl。CCM 本身由 02_/03_ 跑，
         # 预测由 04_ 跑，两者都从后续 Modal Volume 结果读，不经过这里。
@@ -352,7 +353,7 @@ def process_lake_modal(lake_name: str) -> dict:
 def fetch_only(lakes: str = ""):
     """只跑第 1 步：低并发预下载并缓存 ERA5。
 
-        caffeinate -i modal run --detach ccm_modal_app.py::fetch_only
+        caffeinate -i modal run --detach modal_build_lake_panels.py::fetch_only
 
     过夜跑要把两步分开手动触发。main() 里"等第 1 步跑完再派发第 2 步"的调度是本地
     Python 在做的，笔记本一旦睡眠/断开，第 2 步就不会被触发——--detach 只保证已经派
@@ -369,14 +370,14 @@ def fetch_only(lakes: str = ""):
         print(f"\n[WARN] {len(failed)}个湖泊没成功: {failed}")
         print("       明天先单独重跑这几个 --lakes，确认都OK了再跑process_only。")
     else:
-        print("\n全部成功，可以跑 modal run --detach ccm_modal_app.py::process_only 了。")
+        print("\n全部成功，可以跑 modal run --detach modal_build_lake_panels.py::process_only 了。")
 
 
 @app.local_entrypoint()
 def process_only(lakes: str = ""):
     """只跑第 2 步：并行构建面板，假设 ERA5 已由 fetch_only 缓存好。
 
-        caffeinate -i modal run --detach ccm_modal_app.py::process_only
+        caffeinate -i modal run --detach modal_build_lake_panels.py::process_only
 
     某个湖的 ERA5 若还没缓存，这里会临时下载一次——走的是本函数自己的高并发通道、
     不带退避重试，可能又撞限流。先确认 fetch_only 全部 OK 再跑这个。

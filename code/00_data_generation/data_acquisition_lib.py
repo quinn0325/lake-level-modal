@@ -1,6 +1,6 @@
 """数据获取与嵌入参数：WSC 水位/调控流量、ERA5-Land、HydroLAKES/HydroBASINS 掩膜。
 
-配置（LAKES、REGULATION_STATIONS 等）从 ccm_modal_app 导入，不在这里重复定义。
+配置（LAKES、REGULATION_STATIONS 等）从 modal_build_lake_panels 导入，不在这里重复定义。
 
 贯穿全文件的一条规矩：**任何时候都不要 dropna**
 ------------------------------------------------
@@ -27,7 +27,7 @@ import pyEDM
 import requests
 from shapely.geometry import Point, box
 
-from ccm_modal_app import (
+from modal_build_lake_panels import (
     LAKES, REGULATION_STATIONS, REGULATION_SUBPERIODS,
     START_YEAR, END_YEAR, STATION_COORDS, LAKE_OUTLET_STATION,
 )
@@ -316,7 +316,7 @@ def deseasonalize(series, train_end=None):
     信息用于标准化自己了——这是发生在 train/test 切分之前的信息泄漏。
 
     train_end=None 会退化成用全序列计算，只在探索性场景下可用；正式流程必须由调用方
-    显式传入。01_shared/ccm_full_pipeline.py 里有一份逐字相同的实现。
+    显式传入。01_shared/ccm_forecast_core.py 里有一份逐字相同的实现。
     """
     train_series = series if train_end is None else series.iloc[:train_end]
     monthly_clim = train_series.groupby(train_series.index.month).mean()

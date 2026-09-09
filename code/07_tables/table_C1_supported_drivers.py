@@ -5,7 +5,7 @@ ch4_tables/T5_within_lake_edges.csv（420 条湖内候选边，2026-08-31 重跑
 里筛出 effect == "WL" 且 statistically_significant 为真的 24 条。
 
 注意 statistically_significant 字段本身已经包含收敛诊断
-（见 ccm_full_pipeline.apply_fdr_and_causal_evidence:813），
+（见 ccm_forecast_core.apply_fdr_and_causal_evidence），
 因此这 24 条即"BH-FDR 显著 且 收敛诊断通过"的全集，
 不需要再额外与 convergence_diagnostic_pass 取交集。
 

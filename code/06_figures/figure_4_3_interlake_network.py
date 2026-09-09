@@ -17,7 +17,7 @@
 
 约定
 ----
-· d > 0 表示原因领先效应，与 ccm_full_pipeline 一致。
+· d > 0 表示原因领先效应，与 ccm_forecast_core 一致。
 · 数据源 ch4_tables/T6_between_lake_edges.csv（90 条有向边）与
   T7_lake_pair_strength.csv（45 个湖泊对），均出自 2026-08-31 重跑。
 · tier 字段为第四章写作阶段引入的事后水文距离分组，分析代码中不存在，

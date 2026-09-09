@@ -14,8 +14,8 @@ modal secret create cds-api CDSAPI_URL=... CDSAPI_KEY=...
 modal volume put ccm-data /path/to/HydroLAKES_polys_v10_shp HydroLAKES_polys_v10_shp
 modal volume put ccm-data /path/to/hybas_na_lev12_v1c hybas_na_lev12_v1c
 
-modal run code/00_data_generation/ccm_modal_app.py::fetch_only
-modal run code/00_data_generation/ccm_modal_app.py::process_only
+modal run code/00_data_generation/modal_build_lake_panels.py::fetch_only
+modal run code/00_data_generation/modal_build_lake_panels.py::process_only
 
 modal run code/00_data_generation/recompute_embed_params.py
 
