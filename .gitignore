@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
+
+# Runtime outputs downloaded from Modal or regenerated from those downloads.
+/lake_pkls/
+/results/
+/figures/
+/appendices/
+/dataset/
+
+# Large intermediate artifacts.
+*.tiff
+run.log
+
+# Intermediate tables between Modal CSV outputs and figure/table scripts.
+/ch4_tables/

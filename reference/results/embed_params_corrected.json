@@ -1,0 +1,512 @@
+{
+  "Kalamalka_Lake": {
+    "WL": {
+      "E": 4,
+      "tau": 1,
+      "n_obs": 331,
+      "old_E": 4,
+      "old_tau": 1
+    },
+    "T": {
+      "E": 10,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 5,
+      "old_tau": 2
+    },
+    "P": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 7,
+      "old_tau": 4
+    },
+    "R": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 4,
+      "old_tau": 4
+    },
+    "SWE": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 4
+    },
+    "Evap": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 9,
+      "old_tau": 3
+    },
+    "RegFlow": {
+      "E": 4,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 3
+    }
+  },
+  "Okanagan_Lake": {
+    "WL": {
+      "E": 2,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 3
+    },
+    "T": {
+      "E": 9,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 5,
+      "old_tau": 2
+    },
+    "P": {
+      "E": 6,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 6,
+      "old_tau": 4
+    },
+    "R": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 7,
+      "old_tau": 3
+    },
+    "SWE": {
+      "E": 6,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 4
+    },
+    "Evap": {
+      "E": 8,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 4,
+      "old_tau": 3
+    },
+    "RegFlow": {
+      "E": 6,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 4
+    }
+  },
+  "Skaha_Lake": {
+    "WL": {
+      "E": 4,
+      "tau": 1,
+      "n_obs": 328,
+      "old_E": 3,
+      "old_tau": 5
+    },
+    "T": {
+      "E": 9,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 9,
+      "old_tau": 1
+    },
+    "P": {
+      "E": 10,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 9,
+      "old_tau": 2
+    },
+    "R": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 7,
+      "old_tau": 3
+    },
+    "SWE": {
+      "E": 6,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 4
+    },
+    "Evap": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 7,
+      "old_tau": 4
+    },
+    "RegFlow": {
+      "E": 4,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 4
+    }
+  },
+  "Vaseux_Lake": {
+    "WL": {
+      "E": 8,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 5
+    },
+    "T": {
+      "E": 9,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 3
+    },
+    "P": {
+      "E": 10,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 9,
+      "old_tau": 2
+    },
+    "R": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 7,
+      "old_tau": 3
+    },
+    "SWE": {
+      "E": 6,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 4
+    },
+    "Evap": {
+      "E": 2,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 4
+    },
+    "RegFlow": {
+      "E": 4,
+      "tau": 1,
+      "n_obs": 118,
+      "old_E": 3,
+      "old_tau": 3
+    }
+  },
+  "Rainy_Lake": {
+    "WL": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 5,
+      "old_tau": 1
+    },
+    "T": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 4,
+      "old_tau": 3
+    },
+    "P": {
+      "E": 10,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 6,
+      "old_tau": 2
+    },
+    "R": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 4,
+      "old_tau": 3
+    },
+    "SWE": {
+      "E": 6,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 5
+    },
+    "Evap": {
+      "E": 8,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 6,
+      "old_tau": 2
+    },
+    "RegFlow": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 333,
+      "old_E": 3,
+      "old_tau": 4
+    }
+  },
+  "Lake_of_the_Woods": {
+    "WL": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 3
+    },
+    "T": {
+      "E": 8,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 10,
+      "old_tau": 4
+    },
+    "P": {
+      "E": 10,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 6,
+      "old_tau": 2
+    },
+    "R": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 1
+    },
+    "SWE": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 4,
+      "old_tau": 5
+    },
+    "Evap": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 5,
+      "old_tau": 2
+    },
+    "RegFlow": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 332,
+      "old_E": 4,
+      "old_tau": 1
+    }
+  },
+  "Playgreen_Lake": {
+    "WL": {
+      "E": 2,
+      "tau": 1,
+      "n_obs": 306,
+      "old_E": 2,
+      "old_tau": 1
+    },
+    "T": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 10,
+      "old_tau": 4
+    },
+    "P": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 6,
+      "old_tau": 4
+    },
+    "R": {
+      "E": 4,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 4,
+      "old_tau": 5
+    },
+    "SWE": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 3
+    },
+    "Evap": {
+      "E": 8,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 3
+    },
+    "RegFlow": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 334,
+      "old_E": 3,
+      "old_tau": 1
+    }
+  },
+  "Kiskitto_Lake": {
+    "WL": {
+      "E": 2,
+      "tau": 1,
+      "n_obs": 298,
+      "old_E": 9,
+      "old_tau": 4
+    },
+    "T": {
+      "E": 8,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 4
+    },
+    "P": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 6,
+      "old_tau": 3
+    },
+    "R": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 7,
+      "old_tau": 1
+    },
+    "SWE": {
+      "E": 6,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 5,
+      "old_tau": 4
+    },
+    "Evap": {
+      "E": 6,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 6,
+      "old_tau": 3
+    },
+    "RegFlow": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 334,
+      "old_E": 3,
+      "old_tau": 1
+    }
+  },
+  "Sipiwesk_Lake": {
+    "WL": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 306,
+      "old_E": 8,
+      "old_tau": 1
+    },
+    "T": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 4,
+      "old_tau": 3
+    },
+    "P": {
+      "E": 5,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 7,
+      "old_tau": 3
+    },
+    "R": {
+      "E": 4,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 2,
+      "old_tau": 3
+    },
+    "SWE": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 3
+    },
+    "Evap": {
+      "E": 9,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 8,
+      "old_tau": 3
+    },
+    "RegFlow": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 334,
+      "old_E": 3,
+      "old_tau": 4
+    }
+  },
+  "Split_Lake": {
+    "WL": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 318,
+      "old_E": 2,
+      "old_tau": 5
+    },
+    "T": {
+      "E": 8,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 10,
+      "old_tau": 4
+    },
+    "P": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 7,
+      "old_tau": 3
+    },
+    "R": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 4,
+      "old_tau": 5
+    },
+    "SWE": {
+      "E": 7,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 3,
+      "old_tau": 3
+    },
+    "Evap": {
+      "E": 10,
+      "tau": 1,
+      "n_obs": 335,
+      "old_E": 10,
+      "old_tau": 3
+    },
+    "RegFlow": {
+      "E": 3,
+      "tau": 1,
+      "n_obs": 334,
+      "old_E": 3,
+      "old_tau": 1
+    }
+  }
+}

@@ -1,0 +1,11 @@
+lake,system,hydrolakes_id,n_wl_stations,wl_stations,regflow_stations,regflow_period,note
+Kalamalka,Okanagan,7878,1,08NM143,08NM065,1994–2024,
+Okanagan,Okanagan,695,1,08NM083,08NM050,1994–2024,
+Skaha,Okanagan,8117,1,08NM084,08NM002,1994–2024,
+Vaseux,Okanagan,101700,1,08NM243,08NM247,2012–2024,测流站 2012 年始测，序列受限于该子区间
+Rainy,Nelson–Winnipeg,710,2,"05PB024, 05PB007",05PC019,1994–2024,
+Lake of the Woods,Nelson–Winnipeg,57,4,"05PD029, 05PD008, 05PE014, 05PD011","05PE011, 05PE006",1994–2024,两站流量相加（Norman Dam + Kenora Powerhouse）
+Playgreen,Nelson–Winnipeg,578,1,05UB005,05UB009,1994–2024,与 Kiskitto 共用 Jenpeg 大坝出流
+Kiskitto,Nelson–Winnipeg,564,1,05UB013,05UB009,1994–2024,与 Playgreen 共用 Jenpeg 大坝出流
+Sipiwesk,Nelson–Winnipeg,520,1,05UD006,05UE005,1994–2024,无自有坝，以下游 Kelsey 发电站出流代理
+Split,Nelson–Winnipeg,479,1,05UF003,05UF006,1994–2024,

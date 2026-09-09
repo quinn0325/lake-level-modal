@@ -1,0 +1,14 @@
+field,unit,description
+lake,-,Lake name
+system,-,Hydrological system (Okanagan or Nelson-Winnipeg)
+hydrolakes_id,-,HydroLAKES Hylak_id
+month,-,First day of the calendar month (YYYY-MM-01)
+station,-,Water Survey of Canada (HYDAT) station number
+water_level_m,m,"Observed water level at that station, station datum"
+WL,m,Lake water level after two-stage outlier screening and anomaly-based multi-station combination (Eq. 1-2)
+RegFlow,m3 s-1,"Regulated outflow, summed over the lake's regulation gauges"
+T,degC,"2 m air temperature, mean over ERA5-Land cells on the lake"
+P,mm month-1,"Total precipitation, mean over the upstream catchment"
+R,mm month-1,"Total runoff, mean over the upstream catchment"
+SWE,mm,"Snow-water equivalent, mean over the upstream catchment"
+Evap,mm month-1,"Evaporation, mean over ERA5-Land cells on the lake; positive means water loss from the lake"

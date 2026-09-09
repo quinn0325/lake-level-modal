@@ -1,0 +1,27 @@
+cause_lake,effect_lake,obs_rho,obs_lag,obs_n,p_fdr,kendall_tau,lag_resolution,causal_evidence,waterway_connected,tier
+Split,Sipiwesk,0.94265,1,225,0.0094547746612039,0.8888888888888888,resolved,True,True,1_direct
+Sipiwesk,Split,0.94009,2,277,0.0094547746612039,0.6666666666666666,resolved,True,True,1_direct
+Okanagan,Kalamalka,0.72103,2,319,0.0094547746612039,0.9444444444444444,resolved,True,True,1_direct
+Sipiwesk,Playgreen,0.67812,0,267,0.0094547746612039,0.9444444444444444,unresolved_contemporaneous,True,True,1_direct
+Kalamalka,Okanagan,0.6289,1,330,0.0094547746612039,0.7222222222222222,resolved,True,True,1_direct
+Rainy,Lake of the Woods,0.58927,1,333,0.0094547746612039,0.9444444444444444,resolved,True,True,1_direct
+Lake of the Woods,Rainy,0.47414,0,333,0.0094547746612039,0.7222222222222222,unresolved_contemporaneous,True,True,1_direct
+Skaha,Vaseux,0.41263,4,321,0.0094547746612039,1.0,resolved,True,True,1_direct
+Playgreen,Split,0.77935,2,281,0.0094547746612039,0.7777777777777778,resolved,True,False,2_same_subsystem_indirect
+Split,Playgreen,0.68541,0,282,0.0094547746612039,0.8888888888888888,unresolved_contemporaneous,True,False,2_same_subsystem_indirect
+Kiskitto,Split,0.61035,2,267,0.0094547746612039,1.0,resolved,True,False,2_same_subsystem_indirect
+Kiskitto,Playgreen,0.53351,1,267,0.0094547746612039,0.7777777777777778,resolved,True,False,2_same_subsystem_indirect
+Kalamalka,Vaseux,0.49227,6,324,0.0094547746612039,0.7777777777777778,resolved,True,False,2_same_subsystem_indirect
+Vaseux,Kalamalka,0.48647,1,319,0.0094547746612039,0.9444444444444444,resolved,True,False,2_same_subsystem_indirect
+Okanagan,Vaseux,0.47479,7,328,0.0399201596806387,0.8888888888888888,resolved,True,False,2_same_subsystem_indirect
+Rainy,Sipiwesk,0.6492,6,237,0.0094547746612039,1.0,resolved,True,False,3_same_basin_diff_subsystem
+Rainy,Split,0.56695,3,303,0.0256629597946963,0.9444444444444444,resolved,True,False,3_same_basin_diff_subsystem
+Lake of the Woods,Sipiwesk,0.5092,3,239,0.0399201596806387,0.8333333333333334,resolved,True,False,3_same_basin_diff_subsystem
+Kiskitto,Lake of the Woods,0.48112,3,295,0.0094547746612039,0.8888888888888888,resolved,True,False,3_same_basin_diff_subsystem
+Lake of the Woods,Split,0.45791,3,303,0.0399201596806387,0.9444444444444444,resolved,True,False,3_same_basin_diff_subsystem
+Split,Kalamalka,0.55303,2,303,0.0094547746612039,1.0,resolved,True,False,4_different_basin
+Playgreen,Kalamalka,0.51882,6,290,0.0256629597946963,1.0,resolved,True,False,4_different_basin
+Sipiwesk,Kalamalka,0.5075,3,291,0.0399201596806387,1.0,resolved,True,False,4_different_basin
+Kalamalka,Lake of the Woods,0.43907,-9,320,0.0094547746612039,0.9444444444444444,rejected_reverse,False,False,4_different_basin
+Rainy,Okanagan,0.40721,6,329,0.0399201596806387,1.0,resolved,True,False,4_different_basin
+Playgreen,Okanagan,0.40138,1,306,0.0399201596806387,0.9444444444444444,resolved,True,False,4_different_basin

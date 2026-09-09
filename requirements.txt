@@ -1,0 +1,30 @@
+# 版本与 Modal 镜像保持一致，确保本地与远程结果可比。
+
+# ---- 必须锁定 ----
+# pyEDM 自 2.5.0 起移除了 CCM() 的 sequential 参数并改为默认多进程，
+# 本项目部分脚本依赖 2.5.0 之前的 API；实测 2.5.6 会直接抛
+# TypeError: CCM() got an unexpected keyword argument 'sequential'。
+pyEDM==2.4.0
+
+# pandas 3.x 对链式赋值的行为有变（Copy-on-Write），本项目未针对其适配。
+pandas==2.2.2
+numpy==1.26.4
+
+# ---- 其余依赖 ----
+scipy
+statsmodels
+pmdarima
+networkx
+matplotlib
+
+# xgboost 在原始运行中未锁版本，事后也无法从日志里查出当时的版本。
+# 不同大版本对外生列缺失值的处理不同，会让带外生变量的 XGBoost
+# RMSE 在第三位小数上变化（见 README「Reproduction tolerance」）。
+# 如需跨机器逐位一致，请自行锁定一个版本。
+xgboost
+
+# tigramite 仅 PCMCI 分析需要；PCMCI 未纳入正文，如不复现该部分可省略。
+tigramite
+
+# Modal is required for the official reproduction route.
+modal

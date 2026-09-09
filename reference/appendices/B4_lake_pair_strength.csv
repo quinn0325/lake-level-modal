@@ -1,0 +1,46 @@
+pair,S_ij,detected,directly_connected,tier
+Sipiwesk – Split,0.94137,True,True,1_direct
+Playgreen – Sipiwesk,0.732575,True,True,1_direct
+Kalamalka – Okanagan,0.674965,True,True,1_direct
+Lake of the Woods – Rainy,0.531705,True,True,1_direct
+Kiskitto – Sipiwesk,0.4674549999999999,False,True,1_direct
+Skaha – Vaseux,0.322315,True,True,1_direct
+Okanagan – Skaha,0.208365,False,True,1_direct
+Playgreen – Split,0.73238,True,False,2_same_subsystem_indirect
+Kiskitto – Split,0.533345,True,False,2_same_subsystem_indirect
+Kiskitto – Playgreen,0.491905,True,False,2_same_subsystem_indirect
+Kalamalka – Vaseux,0.4893699999999999,True,False,2_same_subsystem_indirect
+Okanagan – Vaseux,0.400995,True,False,2_same_subsystem_indirect
+Kalamalka – Skaha,0.13669,False,False,2_same_subsystem_indirect
+Rainy – Sipiwesk,0.5039,True,False,3_same_basin_diff_subsystem
+Rainy – Split,0.4528999999999999,True,False,3_same_basin_diff_subsystem
+Lake of the Woods – Sipiwesk,0.39797,True,False,3_same_basin_diff_subsystem
+Kiskitto – Lake of the Woods,0.397495,True,False,3_same_basin_diff_subsystem
+Lake of the Woods – Split,0.3928549999999999,True,False,3_same_basin_diff_subsystem
+Lake of the Woods – Playgreen,0.35307,False,False,3_same_basin_diff_subsystem
+Kiskitto – Rainy,0.28754,False,False,3_same_basin_diff_subsystem
+Playgreen – Rainy,0.274485,False,False,3_same_basin_diff_subsystem
+Kalamalka – Split,0.4989,True,False,4_different_basin
+Kalamalka – Sipiwesk,0.4770949999999999,True,False,4_different_basin
+Kalamalka – Playgreen,0.43196,True,False,4_different_basin
+Kalamalka – Lake of the Woods,0.42529,False,False,4_different_basin
+Kalamalka – Kiskitto,0.39993,False,False,4_different_basin
+Kiskitto – Vaseux,0.396635,False,False,4_different_basin
+Okanagan – Playgreen,0.390255,True,False,4_different_basin
+Okanagan – Split,0.3787,False,False,4_different_basin
+Kiskitto – Okanagan,0.37858,False,False,4_different_basin
+Okanagan – Sipiwesk,0.3747,False,False,4_different_basin
+Okanagan – Rainy,0.325205,True,False,4_different_basin
+Rainy – Vaseux,0.295445,False,False,4_different_basin
+Kalamalka – Rainy,0.249475,False,False,4_different_basin
+Split – Vaseux,0.243095,False,False,4_different_basin
+Playgreen – Vaseux,0.242525,False,False,4_different_basin
+Sipiwesk – Vaseux,0.23693,False,False,4_different_basin
+Lake of the Woods – Okanagan,0.23185,False,False,4_different_basin
+Kiskitto – Skaha,0.21994,False,False,4_different_basin
+Playgreen – Skaha,0.216,False,False,4_different_basin
+Sipiwesk – Skaha,0.21065,False,False,4_different_basin
+Rainy – Skaha,0.200375,False,False,4_different_basin
+Lake of the Woods – Vaseux,0.164785,False,False,4_different_basin
+Lake of the Woods – Skaha,0.159825,False,False,4_different_basin
+Skaha – Split,0.112795,False,False,4_different_basin

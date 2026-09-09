@@ -1,0 +1,7 @@
+max_depth,learning_rate,n_estimators,cv_rmse_m,selected
+2,0.05,200,0.15547,True
+3,0.05,200,0.15933,False
+3,0.1,100,0.15871,False
+4,0.05,300,0.16096,False
+3,0.03,400,0.15958,False
+5,0.05,200,0.1627,False
