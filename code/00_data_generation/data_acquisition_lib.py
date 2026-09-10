@@ -1,9 +1,4 @@
 """Acquire hydrological and climate data and prepare inputs for CCM.
-
-This function library is used by the Modal data stage; it is not a separate
-executable route. Monthly series retain the complete calendar, with missing
-months represented as NaN before time-delay embedding. Configuration is
-imported from ``modal_build_lake_panels``.
 """
 import io
 
