@@ -1,9 +1,4 @@
 """Build monthly lake panels from WSC and ERA5-Land data on Modal.
-
-Run ``fetch_only`` before ``process_only``; outputs are stored in ``ccm-data/lake_results``.
-
-Data-acquisition and panel-building functions are implemented in
-``data_acquisition_lib.py``; this file defines the Modal resources and execution steps.
 """
 import modal
 
