@@ -1,10 +1,33 @@
 # Lake-Level CCM Modal Reproduction
 
-This repository is a single-route reproduction package for the MSc dissertation
+This repository contains the code and reference outputs for the MSc dissertation
 *Causal Exploration and Predictability of Lake Water Level: Evidence from Two
 Regulated Canadian River Basins*.
 
-There is one official route:
+## Project Overview
+
+The project studies whether changes in regulated Canadian lake water levels can
+be linked to hydrological and climatic drivers, and whether those inferred
+causal relationships improve short-term water-level prediction. The analysis
+covers ten regulated lakes from two Canadian river-basin systems over January
+1994 to December 2024.
+
+The workflow combines four components:
+
+1. Monthly lake-panel construction from public hydrometric, climate and
+   geospatial data.
+2. Embedding-parameter selection for convergent cross mapping (CCM).
+3. Within-lake and between-lake CCM experiments with surrogate testing and
+   false-discovery-rate correction.
+4. Forecasting experiments comparing baseline models with CCM-informed
+   predictors.
+
+The main outputs are the lake-level analysis tables, figures, appendices and
+public derived dataset used to support the dissertation results.
+
+## Reproduction Scope
+
+This repository provides one official reproduction route:
 
 1. Prepare public source data locally.
 2. Upload required geospatial files and credentials to Modal.
@@ -15,6 +38,11 @@ There is one official route:
 The local post-processing scripts do not rerun CCM or forecasting. The local
 analysis driver from the earlier repository has been removed to avoid a second
 reproduction route.
+
+The committed `reference/` directory contains reference outputs from the
+original Modal run. These files are included so that a reviewer can first verify
+the local post-processing and output checks without paying the cost of a full
+Modal rerun.
 
 ## Repository Layout
 
@@ -62,15 +90,37 @@ pip install -r requirements.txt
 modal setup
 ```
 
+## Quick Local Verification With Reference Outputs
+
+Before running the full Modal pipeline, the committed reference outputs can be
+replayed locally to check that the repository, Python environment and
+post-processing code are complete.
+
+```bash
+mkdir -p lake_pkls results
+cp reference/lake_pkls/*.pkl lake_pkls/
+cp reference/results/* results/
+
+python code/06_postprocess_local/build_outputs.py
+python code/99_check_outputs/check_modal_outputs.py
+```
+
+This verification does not rerun CCM or forecasting. It should finish in a few
+minutes and end with:
+
+```text
+Modal output checks passed.
+```
+
 ## Source Data
 
 The analysis covers January 1994 through December 2024. Download and extract
-the two required geospatial products before starting the Modal run:
+the required geospatial products before starting the Modal run:
 
-| Input | Required product | Role |
-| --- | --- | --- |
-| [HydroLAKES](https://www.hydrosheds.org/products/hydrolakes) | Version 1.0 lake polygons, shapefile distribution (`HydroLAKES_polys_v10_shp`) | lake polygons and lake-grid masks |
-| [HydroBASINS](https://www.hydrosheds.org/products/hydrobasins) | Version 1c, standard North America level 12 polygons (`hybas_na_lev12_v1c`) | upstream-basin masks |
+| Dataset | Where to get it | Exact file/product used here | Role in this project |
+| --- | --- | --- | --- |
+| HydroLAKES | [HydroLAKES product page](https://www.hydrosheds.org/products/hydrolakes) or direct ZIP: <https://data.hydrosheds.org/file/hydrolakes/HydroLAKES_polys_v10_shp.zip> | `HydroLAKES_polys_v10_shp.zip` | lake polygons and lake-grid masks |
+| HydroBASINS | [HydroBASINS product page](https://www.hydrosheds.org/products/hydrobasins) or direct ZIP: <https://data.hydrosheds.org/file/hydrobasins/standard/hybas_na_lev12_v1c.zip> | `hybas_na_lev12_v1c.zip`, standard North America level 12, version 1c | upstream-basin masks |
 
 After extraction, arrange the shapefile components as follows. A shapefile is
 not only its `.shp` file: keep its accompanying `.dbf`, `.shx`, `.prj` and
@@ -89,21 +139,29 @@ source_data/
     ...
 ```
 
-The official ten-lake route does not require a local HYDAT database. Monthly
-water-level and regulated-flow series are fetched directly from Water Survey
-of Canada by `modal_build_lake_panels.py`. HYDAT is used only for the optional
-candidate-lake screening step. To reproduce that step, download the current
-SQLite release (`Hydat.sqlite3`) from the [National Water Data Archive:
-HYDAT](https://www.canada.ca/en/environment-climate-change/services/water-overview/quantity/monitoring/survey/data-products-services/national-archive-hydat.html).
-HYDAT is updated quarterly, so record the download date; a later release may
-produce a slightly different screening table. The selected ten-lake set used
-by the analysis is fixed in the repository code.
+Monthly water-level and regulated-flow series are fetched directly by the
+Modal data-generation code from the Water Survey of Canada historical
+hydrometric data service. No manual WSC download is required for the official
+ten-lake route.
+
+HYDAT is used only for the optional candidate-lake screening step, not for the
+official ten-lake analysis. To reproduce that optional screening step, download
+the current SQLite release (`Hydat.sqlite3`) from the [National Water Data
+Archive: HYDAT](https://www.canada.ca/en/environment-climate-change/services/water-overview/quantity/monitoring/survey/data-products-services/national-archive-hydat.html)
+or from the Water Survey of Canada tools/downloads page. HYDAT is updated over
+time, so record the download date; a later release may produce a slightly
+different screening table. The selected ten-lake set used by the dissertation
+analysis is fixed in this repository.
 
 ERA5-Land is not downloaded manually. The Modal data-generation job retrieves
 the [ERA5-Land monthly averaged dataset](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means)
 through the CDS API. Create a CDS account, accept the dataset terms and obtain
 the URL and personal access token using the [official CDS API setup
 instructions](https://cds.climate.copernicus.eu/how-to-api).
+
+In short, a full rerun requires manual preparation of only the two HydroSHEDS
+ZIP files above plus a valid CDS API credential. WSC and ERA5-Land time series
+are downloaded by the Modal jobs.
 
 ## Modal Setup
 
