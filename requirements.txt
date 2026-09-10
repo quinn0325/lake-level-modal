@@ -16,6 +16,13 @@ matplotlib
 geopandas
 shapely
 pyogrio
+pyshp
+
+# Data acquisition clients.
+requests
+cdsapi
+xarray
+netCDF4
 
 # Official cloud execution route.
 modal
