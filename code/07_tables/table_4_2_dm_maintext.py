@@ -1,5 +1,8 @@
 """Table 4.2 — 正文用的 Diebold–Mariano 结果摘要。
 
+Local table rendering from downloaded results; no model is fitted here.
+仅在本地根据已下载结果生成表格；本脚本不拟合模型。
+
 只列正文实际引用的方法对，每行给出：可比湖数、检验项数、BH 校正后显著项数、
 显著项在两个方向上的分配，以及显著项按预见期的分布。逐项统计量与 p 值见表C5
 与补充材料 S4。

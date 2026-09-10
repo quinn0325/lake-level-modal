@@ -1,22 +1,13 @@
-"""数据获取与嵌入参数：WSC 水位/调控流量、ERA5-Land、HydroLAKES/HydroBASINS 掩膜。
+"""Acquire hydrological and climate data and prepare inputs for CCM.
+获取水文与气候数据，并构建 CCM 所需输入。
 
-配置（LAKES、REGULATION_STATIONS 等）从 modal_build_lake_panels 导入，不在这里重复定义。
+This is a function library used by the Modal data stage, not a second executable route.
+本文件是 Modal 数据阶段调用的函数库，不是另一条可执行路线。
 
-贯穿全文件的一条规矩：**任何时候都不要 dropna**
-------------------------------------------------
-喂给 pyEDM 的序列必须保留完整的日历月份索引，缺测的月份就留成真实的 NaN，不删行、
-不重新编号。原因是 pyEDM 的延迟嵌入完全按数据行的物理顺序算，不看 time 列的实际
-数值——一旦 dropna 再 reset_index，缺口两侧物理上相隔几个月的两行就会被当成"相邻的
-一个月"来构造嵌入向量。那是编出来的邻接关系，不是真实动态，而且不会报错，只会悄悄
-把结果算错。
-
-保留 NaN 就够了：Simplex/CCM 默认 ignoreNan=True，遇到某个预测需要的历史点是 NaN
-会正确地跳过并返回 NaN，不会拿假邻居硬凑。这不是在实现某篇论文的方法（例如 Clark
-et al. 2015 的 multispatial CCM 是一套带 bootstrap 的独立算法，本项目没有实现），
-只是让 pyEDM 按它自己文档"Disjoint prediction sets"那条说明正确处理缺测。
-
-这条规矩对调用方同样成立：传给 get_embedding_params 的必须是保留了完整索引和真实
-NaN 的序列，传 `.dropna().values` 等于让这里的处理全部白做。
+Monthly series retain the complete calendar; missing months remain NaN before
+time-delay embedding. Configuration is imported from modal_build_lake_panels.
+月序列在延迟嵌入前保留完整日历，缺测月份保留为 NaN；配置来自
+modal_build_lake_panels。
 """
 import io
 
@@ -40,10 +31,11 @@ CDS_VARIABLES = {
 }
 
 
-# ============ WSC 水位抓取 ============
+# WSC water levels / WSC 水位
 
 def fetch_wsc_station_level(station_id, start_year=START_YEAR, end_year=END_YEAR, timeout=30):
-    """Fetch monthly mean water level for one WSC station."""
+    """Fetch monthly mean water level for one WSC station.
+    获取单个 WSC 站点的月平均水位。"""
     params = {"stations[]": station_id, "parameters[]": "level", "start_year": start_year, "end_year": end_year}
     r = requests.get(WSC_BASE_URL, params=params, timeout=timeout)
     r.raise_for_status()
@@ -58,7 +50,8 @@ def fetch_wsc_station_level(station_id, start_year=START_YEAR, end_year=END_YEAR
 
 
 def combine_station_water_levels(wide):
-    """合成多站水位；baseline_index用于只用训练窗估计站点基准差。"""
+    """Combine gauges after centring each by its available-period mean.
+    各测站减去自身可用时段均值后合成，并恢复总体平均水位。"""
     wide = wide.sort_index()
     station_means = wide.mean(axis=0, skipna=True)
     combined = (wide - station_means).mean(axis=1, skipna=True) + station_means.mean(skipna=True)
@@ -66,7 +59,8 @@ def combine_station_water_levels(wide):
 
 
 def fetch_lake_water_level(lake_name, start_year=START_YEAR, end_year=END_YEAR):
-    """Fetch + combine all WSC stations for a lake."""
+    """Fetch, align and combine all configured water-level gauges for a lake.
+    获取、对齐并合成湖泊配置中的全部水位站。"""
     stations = LAKES[lake_name]["stations"]
     station_dfs = {}
     for sid in stations:
@@ -90,11 +84,11 @@ def fetch_lake_water_level(lake_name, start_year=START_YEAR, end_year=END_YEAR):
     return combined, wide, coverage_df
 
 
-# ============ WSC 调控流量抓取 ============
+# WSC regulation-flow series / WSC 调控流量序列
 
 def fetch_wsc_station_flow(station_id, start_year=START_YEAR, end_year=END_YEAR, timeout=30):
-    """Fetch monthly mean regulated discharge (flow) for one WSC station.
-    跟fetch_wsc_station_level结构一致，只是parameters[]换成"flow"。"""
+    """Fetch monthly mean discharge for one configured WSC station.
+    获取单个已配置 WSC 站点的月平均流量。"""
     params = {"stations[]": station_id, "parameters[]": "flow", "start_year": start_year, "end_year": end_year}
     r = requests.get(WSC_BASE_URL, params=params, timeout=timeout)
     r.raise_for_status()
@@ -109,9 +103,8 @@ def fetch_wsc_station_flow(station_id, start_year=START_YEAR, end_year=END_YEAR,
 
 
 def fetch_lake_regulation_flow(lake_name, start_year=START_YEAR, end_year=END_YEAR):
-    """抓取一个湖泊调控出口/调控代理站的实测流量；如一个湖泊映射多个放水通道，则多站相加。
-    返回None表示该湖泊没有REGULATION_STATIONS条目，调用方应把RegFlow这一列跳过，
-    不要塞NaN占位。"""
+    """Build a lake's regulation-flow series from its configured gauges.
+    根据已配置测站构建湖泊调控流量；多站按月求和，未配置时返回 None。"""
     station_ids = REGULATION_STATIONS.get(lake_name)
     if not station_ids:
         return None
@@ -139,9 +132,11 @@ def fetch_lake_regulation_flow(lake_name, start_year=START_YEAR, end_year=END_YE
     return total_flow
 
 
-# ============ ERA5-Land 下载 ============
+# ERA5-Land retrieval / ERA5-Land 获取
 
 def build_cds_request(area_bbox, years, variables=None):
+    """Build a CDS request for monthly ERA5-Land variables.
+    构建 ERA5-Land 月度变量的 CDS 请求。"""
     variables = variables or list(CDS_VARIABLES.values())
     return {
         "product_type": ["monthly_averaged_reanalysis"], "variable": variables,
@@ -151,6 +146,8 @@ def build_cds_request(area_bbox, years, variables=None):
 
 
 def fetch_era5_land_monthly(area_bbox, years, out_nc_path, variables=None):
+    """Download monthly ERA5-Land data to a NetCDF file.
+    下载 ERA5-Land 月度数据并保存为 NetCDF。"""
     import cdsapi
     client = cdsapi.Client()
     client.retrieve("reanalysis-era5-land-monthly-means", build_cds_request(area_bbox, years, variables), str(out_nc_path))
@@ -158,6 +155,8 @@ def fetch_era5_land_monthly(area_bbox, years, out_nc_path, variables=None):
 
 
 def try_fetch_era5_land(lake_name, area_bbox, era5_dir, years=range(START_YEAR, END_YEAR + 1)):
+    """Return a cached ERA5-Land file or download it; return None on failure.
+    优先返回缓存文件，否则下载；失败时返回 None。"""
     out_path = era5_dir / f"{lake_name}_era5land_monthly.nc"
     if out_path.exists():
         print(f"[CACHED] {lake_name} 的ERA5-Land数据已在Volume上: {out_path}")
@@ -171,10 +170,11 @@ def try_fetch_era5_land(lake_name, area_bbox, era5_dir, years=range(START_YEAR, 
         return None
 
 
-# ============ 流域/湖泊掩膜、Hylak_id 解析 ============
+# Spatial masks and HydroLAKES matching / 空间掩膜与 HydroLAKES 匹配
 
 def grid_cells_intersecting_polygon(poly, res=0.1, buffer_deg=0.15):
-    """返回与给定多边形相交的所有 0.1度 ERA5-Land 网格盒子。"""
+    """Return ERA5-Land grid cells that intersect a polygon.
+    返回与多边形相交的 ERA5-Land 网格。"""
     minx, miny, maxx, maxy = poly.bounds
     lon0, lon1 = np.floor((minx - buffer_deg) / res) * res, np.ceil((maxx + buffer_deg) / res) * res
     lat0, lat1 = np.floor((miny - buffer_deg) / res) * res, np.ceil((maxy + buffer_deg) / res) * res
@@ -188,13 +188,15 @@ def grid_cells_intersecting_polygon(poly, res=0.1, buffer_deg=0.15):
 
 
 def get_lake_mask_cells(hydrolakes_gdf, hylak_id, id_col="Hylak_id"):
-    """T / Evap 用：湖泊本体覆盖到的 ERA5-Land 格点。"""
+    """Return lake-mask cells used for temperature and evaporation.
+    返回温度和蒸发变量使用的湖面掩膜网格。"""
     poly = hydrolakes_gdf.loc[hydrolakes_gdf[id_col] == hylak_id, "geometry"].iloc[0]
     return grid_cells_intersecting_polygon(poly), poly
 
 
 def trace_upstream_basin(hydrobasins_gdf, outlet_point, id_col="HYBAS_ID", next_down_col="NEXT_DOWN"):
-    """P / R / SWE 用：从出口点反向追溯上游全部子流域，dissolve 成完整流域边界。"""
+    """Trace and merge all HydroBASINS polygons upstream of an outlet.
+    从出口反向追溯并合并全部上游 HydroBASINS 子流域。"""
     containing = hydrobasins_gdf[hydrobasins_gdf.geometry.contains(outlet_point)]
     if containing.empty:
         raise ValueError("出口点不在任何子流域多边形内，请检查坐标或 shapefile 覆盖范围")
@@ -214,12 +216,15 @@ def trace_upstream_basin(hydrobasins_gdf, outlet_point, id_col="HYBAS_ID", next_
 
 
 def get_basin_mask_cells(hydrobasins_gdf, outlet_lonlat):
+    """Return upstream-basin grid cells, geometry and sub-basin identifiers.
+    返回上游流域网格、合并后的边界及子流域编号。"""
     outlet_id, upstream_ids, basin_poly = trace_upstream_basin(hydrobasins_gdf, Point(outlet_lonlat))
     return grid_cells_intersecting_polygon(basin_poly), basin_poly, upstream_ids
 
 
 def extract_masked_series(nc_path, var_name, cells_gdf):
-    """从ERA5-Land netCDF按格点坐标提取区域平均月度序列。用共享维度做逐点匹配（不是笛卡尔积）。"""
+    """Extract a spatially averaged monthly series using paired grid points.
+    按成对网格坐标提取空间平均月序列，避免经纬度笛卡尔积。"""
     import xarray as xr
     ds = xr.open_dataset(nc_path)
     lat_name = "latitude" if "latitude" in ds.coords else "lat"
@@ -233,12 +238,11 @@ def extract_masked_series(nc_path, var_name, cells_gdf):
 
 
 def resolve_lake_area_bbox(lake_name, hydrolakes_gdf, hydrobasins_gdf):
-    """解析湖泊Hylak_id + 计算ERA5下载用的外接矩形bbox，供fetch_era5_modal（低并发预下载）
-    和process_lake_modal（正式流程）共用，避免两边各写一份、容易不同步。
-    返回(hylak_id, lake_cells, basin_cells, area_bbox)；hylak_id为None表示解析失败。"""
+    """Resolve a lake and return its lake/basin masks and ERA5 bounding box.
+    匹配湖泊，并返回湖面掩膜、流域掩膜和 ERA5 下载边界框。"""
     ref_lonlat = STATION_COORDS[LAKE_OUTLET_STATION.get(lake_name) or LAKES[lake_name]["stations"][0]]
-    # 十个研究湖泊全在加拿大境内。跨境湖需要关掉国家过滤（HydroLAKES 会把
-    # 整个湖标成对岸国家），本研究没有这种情况。
+    # Match the Canadian HydroLAKES record associated with the configured gauge.
+    # 匹配配置测站对应的加拿大 HydroLAKES 记录。
     country = "Canada"
     hylak_id, _ = resolve_hylak_id(hydrolakes_gdf, ref_lonlat, country=country)
     if hylak_id is None:
@@ -258,12 +262,8 @@ def resolve_lake_area_bbox(lake_name, hydrolakes_gdf, hydrobasins_gdf):
 
 def resolve_hylak_id(hydrolakes_gdf, ref_lonlat, country="Canada",
                      search_buffer_deg=0.5, max_dist_deg=0.05):
-    """按坐标空间位置解析Hylak_id：优先看有没有多边形直接包含参照点，其次找离参照点最近的多边形。
-    关键点：这里对全部Lake_type一起解析(不预先筛type∈{1,3})，调用方自己决定要不要按类型过滤——
-    如果解析前就只看天然湖多边形，会把本该落在附近水库(type=2)里的测站，误配到旁边一个不相关
-    的小天然水体上——早期按名字+类型筛选时，多个测站就是这样被误配到旁边不相关的
-    水体上的。
-    """
+    """Resolve Hylak_id by containment, then by nearest distance in degrees.
+    先按空间包含关系、再按度数距离匹配 Hylak_id；匹配前不筛选 Lake_type。"""
     lon, lat = ref_lonlat
     ref_pt = Point(ref_lonlat)
     subset = hydrolakes_gdf.cx[lon - search_buffer_deg: lon + search_buffer_deg, lat - search_buffer_deg: lat + search_buffer_deg]
@@ -283,18 +283,18 @@ def resolve_hylak_id(hydrolakes_gdf, ref_lonlat, country="Canada",
     return int(best["Hylak_id"]), subset.head(10)
 
 
-# ============ 单位换算、去季节化、面板拼装 ============
+# Unit conversion, panels and embedding / 单位换算、面板与嵌入参数
 
 def _days_in_month(series):
+    """Return the number of days represented by each monthly observation.
+    返回每个月度观测对应的自然月天数。"""
     idx = pd.DatetimeIndex(series.index)
     return pd.Series(idx.days_in_month, index=series.index, dtype=float)
 
 
 def convert_era5_units(var_name, series):
-    """ERA5-Land单位换算。
-    T: K -> degC；SWE: m water equivalent -> mm；P/R/Evap: m/day -> mm/month（monthly_total=True）或mm/day。
-    ERA5 total_evaporation通常以向下通量为正，蒸发为负，因此取负号让Evap表示正向蒸发量。
-    """
+    """Convert ERA5-Land units to degC or monthly millimetres.
+    将 ERA5-Land 单位转换为摄氏度或月累计毫米；蒸发取正值。"""
     series = series.astype(float)
     if var_name == "T":
         return series - 273.15
@@ -308,16 +308,8 @@ def convert_era5_units(var_name, series):
 
 
 def deseasonalize(series, train_end=None):
-    """减去逐月气候态，返回距平序列。
-
-    月度气候态均值只用 train_end 之前(训练窗口)的数据计算，同一套均值同时套用到
-    训练段与测试段。不能用全部数据(含测试期)一起算月度均值再切分 train/test：
-    那样测试期某个月的真实值，在被算进"该月气候态均值"的那一刻，就已经把自己的
-    信息用于标准化自己了——这是发生在 train/test 切分之前的信息泄漏。
-
-    train_end=None 会退化成用全序列计算，只在探索性场景下可用；正式流程必须由调用方
-    显式传入。01_shared/ccm_forecast_core.py 里有一份逐字相同的实现。
-    """
+    """Subtract monthly climatology estimated before train_end.
+    减去 train_end 之前估计的逐月气候态；未指定时使用完整序列。"""
     train_series = series if train_end is None else series.iloc[:train_end]
     monthly_clim = train_series.groupby(train_series.index.month).mean()
     month_of_each_point = pd.Series(series.index.month, index=series.index)
@@ -325,14 +317,8 @@ def deseasonalize(series, train_end=None):
 
 
 def build_variable_panel(wl_series, era5_vars=None, forecast_horizon=None):
-    """把 WL 与 ERA5-Land 各变量对齐成一张月度面板，逐变量去季节化。返回 (原始面板, 去季节化面板)。
-    reindex 到完整日历月份范围(min~max, 逐月)，保留真实 NaN——这是下游一切处理的前提，
-    此后任何环节都不要对整张面板做 listwise dropna（见文件头）。
-
-    forecast_horizon 必须由调用方显式传入：去季节化的月度气候态只用训练窗口
-    (排除最后 forecast_horizon 个月)计算，否则测试期信息会经由气候态均值泄漏。
-    原实现无此参数、恒用全序列，是已确认的泄漏来源。
-    """
+    """Align variables to a complete monthly calendar and deseasonalize them.
+    将变量对齐到完整月历并去季节化，返回原始面板和距平面板；缺测保留为 NaN。"""
     era5_vars = era5_vars or {}
     panel = pd.DataFrame({"WL": wl_series})
     for name, s in era5_vars.items():
@@ -345,13 +331,8 @@ def build_variable_panel(wl_series, era5_vars=None, forecast_horizon=None):
 
 
 def simplex_self_predict_rho(values, E, tau, exclusion_radius=None):
-    """values需保留完整日历位置和真实NaN——本函数不做任何缺测预处理，直接靠pyEDM
-    Simplex()默认的ignoreNan=True正确跳过需要缺测点的预测，不需要额外代码。
-
-    如果这段数据缺测拼接过于零散(某个候选E/tau组合下连一个有效近邻都凑不出来)，
-    pyEDM底层(scipy cKDTree.query)会直接抛异常而不是返回一个低分——调控流量站常年
-    冬季停测，三十年下来能拼成三十多段、最短的只有一个月。这里接住异常返回NaN，让调用方
-    (select_E)把这个候选当作"此路不通"处理，不要让整个嵌入参数选择跟着崩掉。"""
+    """Return Simplex self-prediction rho for one E/tau combination.
+    计算一个 E/tau 组合的 Simplex 自预测相关系数；失败或有效配对不足时返回 NaN。"""
     n = len(values)
     df = pd.DataFrame({"time": np.arange(n), "v": values})
     full = f"1 {n}"
@@ -369,14 +350,8 @@ def simplex_self_predict_rho(values, E, tau, exclusion_radius=None):
 
 
 def select_E(values, tau, candidate_E=range(2, 11), fallback_E=2):
-    """values需保留完整日历位置和真实NaN，理由同simplex_self_predict_rho。
-
-    原来直接调pyEDM.EmbedDimension()一次性扫描全部候选E——这个函数内部用多进程池
-    并行跑每个E，只要其中一个E因为数据太碎、找不到有效近邻而抛异常，整个进程池
-    连带崩溃、一个E的结果都拿不到。改成逐个E值
-    单独调simplex_self_predict_rho、每个都单独接住异常，一个E失败不影响其他E值
-    继续尝试；如果全部候选E都失败，退回fallback_E=2并在返回的curve里标注清楚，
-    不能让整个湖泊的计算因为一个变量选不出E就整体失败。"""
+    """Select E by maximum valid Simplex rho, with a documented fallback.
+    按有效 Simplex rho 最大值选择 E；全部失败时使用并标记回退值。"""
     rows = []
     for E in candidate_E:
         rho = simplex_self_predict_rho(values, E=E, tau=tau)
@@ -391,29 +366,8 @@ def select_E(values, tau, candidate_E=range(2, 11), fallback_E=2):
 
 
 def get_embedding_params(values, var_name, verbose=True, tau=None, candidate_E=None):
-    """values必须是保留了完整日历月份位置和真实NaN的序列/数组——调用方不能先做
-    .dropna()再传进来，否则E的选择会受"缺测拼接"问题影响。
-
-    tau 现固定为 1（由 config.EMBED_TAU 提供），不再用 AMI/simplex 自动选择。三点理由：
-
-    1. 文献先例：Javier et al. (2022, Physica A 604, 127893) 在同类水库系统的 CCM
-       分析中即固定 τ=1，理由是"gives the highest resolution for the embedding"。
-    2. 消除泄漏：原先数据驱动选 τ 依赖去季节化后的序列，而数据生成阶段的去季节化
-       曾使用全序列（含测试期）气候态，导致 τ 携带测试期信息——实测有近四成变量的
-       τ 会因为修正去季节化而改变。固定 τ 后该环节不复存在。
-    3. 缩短嵌入跨度：原 τ∈[1,5] 配合 E∈[2,10]，嵌入跨度 (E-1)*τ 最长达 36 个月，
-       在约 330 个月度观测且含缺测的序列上代价很大。实测跨度 25–40 个月的边
-       有效样本中位数降至 299、显著率降至 30%（跨度 0–6 个月者为 329 / 46%）。
-       τ=1 使跨度上限降为 E-1 ≤ 9 个月。
-
-    E 仍由单变量 simplex 自预测选择，**不**改用"使交叉映射技巧最大"的选法——
-    后者用被检验的量本身来选参数，存在循环论证问题。
-
-    代价（需在方法论中披露）：月度序列自相关强，τ=1 时相邻滞后坐标高度冗余，
-    嵌入向量沿对角线方向退化（Fraser & Swinney, 1986 提出 AMI 选 τ 正是为此）。
-    该偏差通过 IAAFT 替代序列控制——替代序列保留原序列功率谱因而保留自相关结构，
-    观测数据与零分布走完全相同的嵌入流程，冗余对两者影响一致。
-    """
+    """Use a fixed tau and select E from calendar-preserving monthly data.
+    使用固定 tau，并从保留完整月历和 NaN 的序列中选择 E。"""
     if tau is None:
         tau = _config_embed_tau()
     if candidate_E is None:
@@ -426,7 +380,8 @@ def get_embedding_params(values, var_name, verbose=True, tau=None, candidate_E=N
 
 
 def _config_embed_tau():
-    """从 config.py 读 τ；config 不可导入时退回 1（与 config 默认值一致）。"""
+    """Read tau from config, falling back to 1.
+    从 config 读取 tau，失败时回退为 1。"""
     try:
         import config
         return config.EMBED_TAU
@@ -435,6 +390,8 @@ def _config_embed_tau():
 
 
 def _config_embed_E_candidates():
+    """Read candidate E values from config, falling back to 2 through 10.
+    从 config 读取候选 E，失败时回退为 2 至 10。"""
     try:
         import config
         return config.EMBED_E_CANDIDATES

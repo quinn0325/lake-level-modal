@@ -1,74 +1,14 @@
-"""Shared library: preprocessing, CCM, surrogates, FDR, forecasting.
+"""Shared scientific algorithms for preprocessing, CCM and forecasting.
+数据预处理、CCM 与预测分析的共享科学算法。
 
-Everything downstream of data acquisition lives here. The stage scripts in
-02_/03_/04_ are thin wrappers that parallelise calls into this module, so if two
-stages ever disagree about how a panel is built, the bug is in here.
+This library is imported by the official ``modal_*.py`` stages and is not run
+directly. It provides training-only preprocessing, missing-data rules, CCM with
+IAAFT significance tests, forecast models and evaluation utilities.
+本库由正式的 ``modal_*.py`` 阶段导入，不单独运行。它提供仅基于训练期的预处理、
+缺测规则、带 IAAFT 显著性检验的 CCM、预测模型与评估函数。
 
-Entry point is a `{lake}_result.pkl` written by modal_build_lake_panels.process_lake_modal,
-holding wide_wl and real_predictors. ERA5 download and catchment masking are not
-duplicated here -- they live in data_acquisition_lib.py and need CDS credentials plus the
-HydroLAKES/HydroBASINS shapefiles.
-
-Design decisions that change how results should be read
--------------------------------------------------------
-Deseasonalisation uses training-period monthly climatology only. Computing it
-over the full record and splitting afterwards leaks: a test-period value would
-be inside the mean that is then subtracted from it. build_variable_panel() and
-deseasonalize() therefore require an explicit train_end.
-
-Long gaps drop a variable rather than being filled. find_long_gap_vars() checks
-the training window only. Checking the test period too would catch more gaps,
-but deciding whether a variable is eligible using test-period data is test-aware
-model selection -- a subtler leak than the one it fixes. Test-period gaps are
-instead handled at prediction time: the XGBoost recursion and both
-rolling_origin_* functions skip the affected origins, and SARIMAX, which cannot
-skip inside a single predict(), fails honestly.
-
-Forecast features must lag by at least one month, and only non-negative lags are
-eligible. best_positive_lag() takes the argmax over lag >= 0 rather than filtering
-a global argmax afterwards: a variable whose global best is at lag -2 may still
-have a perfectly usable peak at +3, and discarding it would throw away real
-information. A negative lag means the effect moved before the cause, which is not
-something you can forecast with.
-
-Evaluation is in anomaly space throughout. This is deliberate -- scoring against
-raw water level lets a model look good by predicting the seasonal cycle. It also
-means the Climatology baseline degenerates to predicting zero, which is why it
-is not among the baselines.
-
-Perfect foresight is disclosed, not hidden. Methods with exogenous variables use
-observed driver values over the test period, not forecasts of them. The question
-being asked is how much predictive information the causal relationships carry,
-not whether this could be deployed as a live warning system. `min_exog_lag`,
-`n_foresight_free_months` and `requires_foresight` mark which results need
-foresight: when h <= lag the driver values were already history at the forecast
-origin and nothing is assumed.
-
-Diebold-Mariano runs on the rolling-origin results, pooled by horizon, with the
-Newey-West lag set to that horizon. Running it on a single 37-month trajectory
-with h=1 would assume errors at horizons 30 and 31 are independent, which they
-are not. Methods are aligned on the intersection of their origins before
-comparison, since they skip different ones.
-
-Known limitations, not fixed
-----------------------------
-Playgreen, Kiskitto and Sipiwesk have no water level at all for 2024, which sits
-inside the 37-month test window. The NaN mask in _forecast_metrics() keeps those
-months out of the scores, but n_eval for those three lakes is correspondingly
-lower and should be quoted alongside their errors.
-
-Pettitt tests find real non-seasonal level shifts in several lakes, probably
-genuine changes in regulation. Deseasonalisation still uses one climatology per
-series. Test periods usually fall entirely on one side of a break, so the effect
-on forecasting is small; the effect on CCM significance is not characterised.
-
-Evaporation shows a systematic anomaly across seven lakes in 2022-2023, most
-likely an ERA5/ERA5T transition artefact. Left uncorrected.
-
-Playgreen and Kiskitto share one regulated-outflow gauge (05UB009). That is
-physical, not a bug -- both sit behind the Jenpeg dam -- and their water levels
-are almost uncorrelated (r = -0.20), so the two RegFlow -> WL findings are not
-redundant.
+Data retrieval and spatial masking remain in ``data_acquisition_lib.py``.
+数据获取与空间掩膜位于 ``data_acquisition_lib.py``。
 """
 
 from __future__ import annotations
@@ -89,16 +29,14 @@ from scipy import stats as sp_stats
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# ============================================================
-# 1. 配置
-# ============================================================
+# 1. Configuration / 配置
 
 START_YEAR, END_YEAR = 1994, 2024
 WSC_BASE_URL = "https://wateroffice.ec.gc.ca/services/monthly_data/csv/inline"
 
-# 路径默认值取包内相对位置，不硬编码到某台机器上。Modal 上运行时这几个变量会被
-# 容器路径覆盖（见 04_forecast 里的 _configure_module），所以默认值主要服务本地运行。
-_PKG_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 仓库根
+# Repository-relative defaults support local rendering scripts; Modal stages replace them with container paths.
+# 仓库相对路径供本地图表与数据集脚本读取；Modal 阶段会将其替换为容器路径。
+_PKG_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Repository root / 仓库根目录
 _DEFAULT_RESULTS = os.path.join(_PKG_DIR, "results")
 
 PKL_DIR = os.environ.get("CCM_PKL_DIR", os.path.join(_PKG_DIR, "lake_pkls"))
@@ -107,29 +45,18 @@ os.makedirs(OUT_DIR, exist_ok=True)
 LOG_TXT = os.path.join(OUT_DIR, "run.log")
 
 
-FORECAST_HORIZON = 37          # 9:1切分附近，固定月份数；也是滚动起点评估能取到的样本量的来源
-N_SURROGATES = 500              # IAAFT 替代序列个数。1/(N+1) 是 p 值的分辨率下限，必须
-                                 # 细于 BH-FDR 的拒绝边界，否则边界附近的显著性判定会被
-                                 # 单个替代序列的随机结果翻转。500 给出 1/501 ≈ 0.002。
-CCM_LAGS = list(range(-12, 13))  # CCM候选滞后扫描范围(月)：统一的带符号扫描
-# 每条边在 -12..+12 上做一次完整的带符号扫描，而不是先扫 0..12 做显著性、
-# 再单独扫负滞后做诊断。这样每条边只有一个 lag profile 和一个全局最优 d，
-# 也才能知道全局最优是不是落在非负窗口之外。
-# 观测数据与每一个 IAAFT 替代序列都经由 max_over_lags 走同一个滞后族（本常量是
-# 其默认值的唯一来源），p 值定义因此自洽，不存在滞后多重选择偏差。
-# 代价是取最大值的候选数由 13 增至 25，零分布右移、门槛提高——保守方向。
+FORECAST_HORIZON = 37           # Fixed holdout near a 9:1 split. / 接近 9:1 切分的固定测试期。
+N_SURROGATES = 500              # Gives minimum surrogate p = 1/501. / 替代检验最小 p 值为 1/501。
+# Observed and surrogate series use the same signed lag family. / 观测与替代序列使用同一带符号滞后集合。
+CCM_LAGS = list(range(-12, 13))
 ROLLING_HORIZONS = [1, 3, 6, 12]
 WL_AR_LAGS = (1, 2, 3, 6, 12)
-EXOG_ANTECEDENT_WINDOWS = (3, 6)  # 外生变量antecedent window特征(该滞后往前
-                                   # 3/6个月的滚动均值)的窗口长度，见build_exog_
-                                   # antecedent_features()的说明
+EXOG_ANTECEDENT_WINDOWS = (3, 6)  # Antecedent-window lengths in months. / 前期累积窗口（月）。
 
-MAX_FILLABLE_GAP_MONTHS = 6      # 半年。<= 6 个月的连续缺口允许插值/前后填充，更长的把
-                                  # 整个变量排除。选半年这个整数而非贴着某个具体缺口的长度；
-                                  # 已核实这个取值不改变任何外生候选变量的排除判定。
-OUTLIER_Z_THRESH = 6            # WL异常检测：月度变化量的稳健z分数阈值
-OUTLIER_LEVEL_Z_THRESH = 5      # WL异常检测：数值本身的稳健z分数阈值(二次确认)
-TRAIN_GAP_WARN_FRACTION = 0.15  # 总缺测比例超过这个只警告，不排除(排除用的是长缺失判据)
+MAX_FILLABLE_GAP_MONTHS = 6      # Fill short gaps; exclude variables with longer gaps. / 填补短缺口，长缺口变量整体排除。
+OUTLIER_Z_THRESH = 6             # Robust z threshold for monthly changes. / 月度变化的稳健 z 阈值。
+OUTLIER_LEVEL_Z_THRESH = 5       # Confirmation threshold for levels. / 水位值二次确认阈值。
+TRAIN_GAP_WARN_FRACTION = 0.15   # Warn on missing fraction; exclusion uses gap length. / 缺测比例仅警告，排除依据为缺口长度。
 
 LAKES = [
     "Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake", "Vaseux_Lake",
@@ -148,20 +75,17 @@ XGB_PARAM_GRID = [
 ]
 
 def log(msg):
+    """Write a timestamped message to stdout and the run log.
+    将带时间戳的消息写入终端和运行日志。"""
     line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}"
     print(line, flush=True)
     with open(LOG_TXT, "a", encoding="utf-8") as f:
         f.write(line + "\n")
-# ============================================================
-# 2. 预处理：多站合成 / 异常值剔除 / 去季节化 / 面板构建 / 长短缺失分级
-# ============================================================
+# 2. Preprocessing: gauges, outliers, seasonality, panels and gaps / 预处理：测站、异常值、季节性、面板与缺测
 
 def wl_station_outliers(series, z_thresh=OUTLIER_Z_THRESH, level_z_thresh=OUTLIER_LEVEL_Z_THRESH):
-    """单个WL站点异常值检测：先找月度变化量(一阶差分)的稳健异常，抓"骤变"；再用
-    "数值本身相对该站点整体历史分布是不是也异常"做二次确认。只标"骤变+数值本身也是
-    历史级异常"的点——正常但幅度较大的季节性变化(比如融雪期水位快速上涨)不会被
-    误判，只有类似Kiskitto_Lake 2011年5-8月那种"数值在站点历史上从未出现过"的点
-    才会被标记。返回应该设成NaN的时间点。"""
+    """Return the two-stage outlier mask for one water-level gauge.
+    返回单个水位站的两阶段异常值掩膜。"""
     s = series.dropna()
     diffs = s.diff().dropna()
     if len(diffs) < 10:
@@ -190,9 +114,8 @@ def wl_station_outliers(series, z_thresh=OUTLIER_Z_THRESH, level_z_thresh=OUTLIE
 
 
 def clean_wide_wl(wide, log_prefix=""):
-    """对每个WL站点分别做异常值检测，把确认的异常点设成NaN(不删除整行，其他站点
-    该月份如果没问题继续保留)——不自动修正数值，只是不再让这几个点污染多站合成
-    和去季节化。每一处改动都打印出来，这是"异常处理要留痕"的最低要求。"""
+    """Replace confirmed station outliers with NaN without dropping other gauges.
+    将确认的测站异常值设为 NaN，同时保留其他测站。"""
     wide = wide.copy()
     for col in wide.columns:
         bad_idx = wl_station_outliers(wide[col])
@@ -204,9 +127,8 @@ def clean_wide_wl(wide, log_prefix=""):
 
 
 def combine_station_water_levels(wide, method="anomaly_mean"):
-    """多站水位合成：每站减自己长期均值(anomaly)->跨站平均->加回全部站均值的均值。
-    支撑文献：Risien & Strub (2016, Scientific Data)同样用"减去长期均值再合并"的
-    anomaly-referencing方法。"""
+    """Combine centred gauge anomalies and restore the mean lake level.
+    合成中心化后的测站距平，并恢复湖泊平均水位。"""
     wide = wide.sort_index()
     if method == "raw_mean":
         return wide.mean(axis=1, skipna=True)
@@ -216,13 +138,8 @@ def combine_station_water_levels(wide, method="anomaly_mean"):
 
 
 def deseasonalize(series, train_end=None):
-    """去季节化：每个值减去该变量所在月份的多年平均值。月度气候态均值只用
-    train_end之前(训练窗口)的数据算——同一套均值同时套用到训练段和测试段。
-    不能用全部数据(含测试期)一起算月度均值再切分train/test：那样测试期某个月
-    的真实值，在被算进"该月气候态均值"的那一刻，就已经把自己的信息用于标准化
-    自己了，这是发生在train/test切分之前的信息泄漏，会让测试期指标虚高。
-    train_end=None时退化为用全部数据算(仅用于探索性/诊断场景，正式训练/评估
-    流程必须传入train_end)。"""
+    """Subtract monthly climatology estimated from the training period only.
+    减去仅由训练期估计的逐月气候态。"""
     train_series = series if train_end is None else series.iloc[:train_end]
     monthly_clim = train_series.groupby(train_series.index.month).mean()
     month_of_each_point = pd.Series(series.index.month, index=series.index)
@@ -230,11 +147,8 @@ def deseasonalize(series, train_end=None):
 
 
 def build_variable_panel(wl_series, era5_vars, forecast_horizon=None):
-    """重建完整日历面板：从 wl_series + era5_vars 原始序列出发，reindex 到完整月历，
-    真实缺测保留 NaN。
-    去季节化时只用训练窗口(排除最后forecast_horizon个月测试期)算月度气候态均值，
-    详见deseasonalize()的说明——这是修复train/test切分前信息泄漏的关键一步，
-    forecast_horizon必须由调用方显式传入，不能省略。"""
+    """Align variables to a complete calendar and return raw and deseasonalised panels.
+    将变量对齐到完整月历，并返回原始及去季节化面板。"""
     panel = pd.DataFrame({"WL": wl_series})
     for name, s in era5_vars.items():
         panel[name] = s
@@ -248,6 +162,8 @@ def build_variable_panel(wl_series, era5_vars, forecast_horizon=None):
 
 
 def calendar_month_offsets(index, start=None, one_based=True):
+    """Convert dated observations to integer month offsets.
+    将日期观测转换为整数月份偏移。"""
     idx = pd.DatetimeIndex(index)
     start = pd.Timestamp(idx.min() if start is None else start)
     offsets = (idx.year * 12 + idx.month) - (start.year * 12 + start.month)
@@ -255,8 +171,8 @@ def calendar_month_offsets(index, start=None, one_based=True):
 
 
 def longest_consecutive_gap_months(series):
-    """训练窗口里最长的连续缺测段有多少个月。比"总缺测比例"更准确地判断一个变量
-    是"短缺失可以插值"还是"长缺失应该整个排除"。"""
+    """Return the longest consecutive missing interval in calendar months.
+    返回按日历月份计算的最长连续缺测期。"""
     is_na = series.isna().values
     max_run = 0
     cur_run = 0
@@ -270,16 +186,8 @@ def longest_consecutive_gap_months(series):
 
 
 def find_long_gap_vars(panel, candidate_vars, forecast_horizon, log_prefix=""):
-    """找出"长缺失"变量(最长连续缺口>MAX_FILLABLE_GAP_MONTHS)，这些变量应该在候选池
-    阶段就整个排除，不再指望插值/前后填充硬填(比如Vaseux_Lake的RegFlow训练窗口里
-    有连续18年缺测)。
-
-    **只扫训练窗口，不扫全序列。** 用测试期的缺测情况决定"这个变量要不要进候选池"
-    等于模型选择阶段偷看了未来——某个变量训练期完整、只是测试期恰好缺 8 个月，
-    训练时根本不可能预先知道。测试期真的出现长缺口，由预测阶段各自处理：
-    fit_xgboost_multi 的递归循环与两个 rolling_origin_* 只跳过受影响的月份/起点，
-    SARIMAX 的单次 predict() 做不到部分跳过，缺口超限时整个方法诚实报错。
-    返回该排除的变量名集合。"""
+    """Identify training variables whose longest gap exceeds the allowed limit.
+    识别训练期最长缺口超过上限的变量。"""
     train = panel.iloc[:-forecast_horizon]
     bad = set()
     for var in candidate_vars:
@@ -295,7 +203,8 @@ def find_long_gap_vars(panel, candidate_vars, forecast_horizon, log_prefix=""):
 
 
 def check_train_gap_warning(panel, cols, forecast_horizon, log_prefix=""):
-    """总缺测比例超过阈值只警告，不排除(排除用find_long_gap_vars的连续缺口判据)。"""
+    """Log variables whose training-period missing fraction exceeds the warning level.
+    记录训练期缺测比例超过警告阈值的变量。"""
     train = panel.iloc[:-forecast_horizon]
     for col in cols:
         if col not in train.columns:
@@ -306,12 +215,8 @@ def check_train_gap_warning(panel, cols, forecast_horizon, log_prefix=""):
 
 
 def _fill_series_block(s, limit):
-    """对一列做"只填补长度<=limit的连续缺口"的插值：逐段扫描原始连续NaN游程，
-    只有游程长度<=limit才填(两端都有锚点用线性插值，只有一端有锚点——缺口在序列
-    开头或结尾——用那一端的值常数延展)；长度>limit的游程整段保持NaN，不填。
-
-    不能写成 interpolate(limit=).ffill(limit=).bfill(limit=) 链式调用：三次限流
-    互不知道对方填过什么，一个远超 limit 的缺口会被三段各填一点、合起来填满。"""
+    """Fill only missing runs no longer than the configured limit.
+    仅填补不超过设定上限的连续缺测段。"""
     s = s.copy()
     is_na = s.isna().values
     n = len(s)
@@ -338,19 +243,18 @@ def _fill_series_block(s, limit):
 
 
 def _fill_training_block(obj, limit=MAX_FILLABLE_GAP_MONTHS):
-    """只填补长度<=limit个月的连续缺口，不会跨越长缺口硬填(见_fill_series_block)。"""
+    """Apply short-gap filling independently to each training variable.
+    分别对各训练变量进行短缺口填补。"""
     if isinstance(obj, pd.Series):
         return _fill_series_block(obj, limit)
     return obj.apply(lambda col: _fill_series_block(col, limit))
 
 
-# ============================================================
-# 3. CCM核心：显式嵌入 + max-over-lags + IAAFT替代数据显著性检验
-# ============================================================
+# 3. CCM: explicit embedding, lag maximisation and IAAFT tests / CCM：显式嵌入、滞后最大化与 IAAFT 检验
 
 def iaaft_surrogate(x, n_iter=100, rng=None):
-    """Schreiber & Schmitz (1996) IAAFT替代数据：保留原序列振幅分布+功率谱，
-    打乱与effect的时序耦合。"""
+    """Generate an IAAFT surrogate preserving the value distribution and power spectrum.
+    生成保留数值分布与功率谱的 IAAFT 替代序列。"""
     rng = rng or np.random.default_rng()
     x = np.asarray(x, dtype=float)
     n = len(x)
@@ -366,9 +270,8 @@ def iaaft_surrogate(x, n_iter=100, rng=None):
 
 
 def make_effect_embedding_dataframe(panel, cause_col, effect_col, lag, E_eff, tau_eff):
-    """显式构造cause->effect在指定lag下的CCM输入表。effect(t+lag), effect(t+lag-tau),
-    effect(t+lag-2*tau), ...(往过去看，不能写成+k*tau，那样会偷看未来——这是之前
-    notebook审查发现并修复过的符号bug，这里直接用已验证正确的实现)。"""
+    """Build an explicit effect embedding for one directed CCM lag.
+    为单个有向 CCM 滞后构建显式效应嵌入。"""
     if cause_col not in panel.columns or effect_col not in panel.columns:
         return None, None
     if E_eff is None or tau_eff is None:
@@ -393,6 +296,8 @@ def make_effect_embedding_dataframe(panel, cause_col, effect_col, lag, E_eff, ta
 
 
 def _extract_ccm_rho(result_df, source_col):
+    """Extract the final valid CCM skill value from a pyEDM result.
+    从 pyEDM 结果中提取最后一个有效 CCM 技巧值。"""
     if result_df is None or len(result_df) == 0:
         return np.nan
     non_lib_cols = [c for c in result_df.columns if c != "LibSize"]
@@ -404,7 +309,8 @@ def _extract_ccm_rho(result_df, source_col):
 
 
 def ccm_rho_embedded(df_time, embed_cols, source_col, sample=1, seed=1):
-    """不传 sequential：pyEDM 2.5.0 起移除了该参数，不传则 2.4.0 与 2.5.x 都能跑。"""
+    """Compute CCM skill from an explicit embedding at one library size.
+    在单个库长度下根据显式嵌入计算 CCM 技巧值。"""
     import pyEDM
     n = len(df_time)
     if n < 20:
@@ -423,6 +329,8 @@ def ccm_rho_embedded(df_time, embed_cols, source_col, sample=1, seed=1):
 
 
 def ccm_curve_embedded(df_time, embed_cols, source_col, sample=50, seed=1):
+    """Compute the CCM convergence curve for an explicit embedding.
+    计算显式嵌入的 CCM 收敛曲线。"""
     import pyEDM
     n = len(df_time)
     if n < 30:
@@ -448,9 +356,8 @@ def ccm_curve_embedded(df_time, embed_cols, source_col, sample=50, seed=1):
 
 
 def max_over_lags(panel, cause_col, effect_col, E_eff, tau_eff, lags=CCM_LAGS):
-    """对真实数据(或替代数据)扫描全部候选滞后，取最大rho。真实数据和每一个IAAFT
-    替代数据都要走这同一个函数，才能构成公平的null分布(不能只对真实数据扫多个
-    滞后取最大值，却让替代数据只测单个滞后)。"""
+    """Scan the signed lag family and return its maximum CCM skill.
+    扫描带符号滞后集合并返回最大 CCM 技巧值。"""
     best_lag, best_rho, best_n = None, -np.inf, 0
     for lag in lags:
         df_time, embed_cols = make_effect_embedding_dataframe(panel, cause_col, effect_col, lag, E_eff, tau_eff)
@@ -465,8 +372,8 @@ def max_over_lags(panel, cause_col, effect_col, E_eff, tau_eff, lags=CCM_LAGS):
 
 
 def test_one_ccm_edge(panel, cause_col, effect_col, E_eff, tau_eff, n_surrogates=N_SURROGATES):
-    """单条边(cause->effect)完整的滞后感知max-over-lags + IAAFT显著性检验，
-    附带收敛诊断。返回一个dict，跟420条边/连通性分析用的是同一套逻辑。"""
+    """Test one directed edge with lag maximisation and IAAFT surrogates.
+    使用滞后最大化与 IAAFT 替代序列检验单条有向边。"""
     obs_lag, obs_rho, obs_n = max_over_lags(panel, cause_col, effect_col, E_eff, tau_eff)
     if obs_lag is None or np.isnan(obs_rho):
         return {"cause": cause_col, "effect": effect_col, "status": "insufficient_data"}
@@ -520,8 +427,8 @@ def test_one_ccm_edge(panel, cause_col, effect_col, E_eff, tau_eff, n_surrogates
 
 
 def lag_scan(panel_df, cause, effect, embed_params, lags=None, seed=0):
-    """只用来给"间接祖先但没有直接显著边"的变量挑一个结构上最优的滞后，不是显著性
-    检验。跟 data_acquisition_lib.py::lag_scan 逐字一致(非embedded写法，pyEDM自己内部做嵌入)。"""
+    """Scan lags for predictor selection without retesting edge significance.
+    扫描滞后用于预测变量选择，不重新判定边的显著性。"""
     if lags is None:
         lags = CCM_LAGS if "CCM_LAGS" in globals() else range(-12, 13)
     import pyEDM
@@ -545,13 +452,11 @@ def lag_scan(panel_df, cause, effect, embed_params, lags=None, seed=0):
     return pd.DataFrame(results)
 
 
-# ============================================================
-# 4. within-lake 全部边 CCM 检验(7变量x6方向=42条边/湖，10湖共420条边)
-# ============================================================
+# 4. Within-lake panel loading for 420 directed edges / 湖内 420 条有向边的面板读取
 
 def load_lake_panel_for_ccm(lake_name):
-    """读取pkl，清洗WL异常值，重建完整日历面板，切掉最后
-    FORECAST_HORIZON个月留给测试。返回(panel_train, embed_params, cached)。"""
+    """Load one cleaned training panel and its authoritative embedding parameters.
+    读取单湖清理后的训练面板及正式嵌入参数。"""
     with open(os.path.join(PKL_DIR, f"{lake_name}_result.pkl"), "rb") as f:
         cached = pickle.load(f)
     clean_wide = clean_wide_wl(cached["wide_wl"], log_prefix=f"[{lake_name}] ")
@@ -560,65 +465,40 @@ def load_lake_panel_for_ccm(lake_name):
     _, panel_deseason = build_variable_panel(combined_wl, {c: real_predictors[c] for c in real_predictors.columns},
                                               forecast_horizon=FORECAST_HORIZON)
     panel_train = panel_deseason.iloc[:-FORECAST_HORIZON]
-    return panel_train, load_embed_params(lake_name, cached), cached
+    return panel_train, load_embed_params(lake_name), cached
 
 
-# ============================================================
-# 嵌入参数来源：优先用修正版，PKL 缓存值仅作回退
-# ============================================================
+# Authoritative embedding parameters generated on Modal / Modal 生成的正式嵌入参数
 
-EMBED_PARAMS_CORRECTED = None       # 由 load_embed_params 惰性载入并缓存
+EMBED_PARAMS = None
 EMBED_PARAMS_PATH = os.environ.get(
     "CCM_EMBED_PARAMS", os.path.join(_DEFAULT_RESULTS, "embed_params_corrected.json")
 )
 
 
-def load_embed_params(lake_name, cached=None):
-    """返回该湖的 {变量: {"E":…, "tau":…}}。
-
-    PKL 里缓存的 embed_params 由数据生成阶段算出，当时去季节化用了含测试期的
-    全序列气候态，因此 E/τ 携带测试期信息——这是修复后**唯一残留**的泄漏点
-    （两个面板构建函数本身早已改为只用训练期去季节化）。
-
-    recompute_embed_params.py 用正确的训练期面板重算并写出
-    embed_params_corrected.json；此处优先读它，读不到才回退 PKL 并告警，
-    以免在缺文件时静默地用回带泄漏的值。
-    """
-    global EMBED_PARAMS_CORRECTED
-    if EMBED_PARAMS_CORRECTED is None:
+def load_embed_params(lake_name):
+    """Load one lake's authoritative embedding parameters from JSON.
+    从 JSON 读取单湖正式嵌入参数。"""
+    global EMBED_PARAMS
+    if EMBED_PARAMS is None:
         try:
             with open(EMBED_PARAMS_PATH, encoding="utf-8") as f:
-                EMBED_PARAMS_CORRECTED = json.load(f)
-        except Exception:
-            EMBED_PARAMS_CORRECTED = {}
-    if lake_name in EMBED_PARAMS_CORRECTED:
-        return EMBED_PARAMS_CORRECTED[lake_name]
-    log(f"[{lake_name}] 警告：未找到修正版嵌入参数({EMBED_PARAMS_PATH})，"
-        f"回退使用 PKL 缓存值——该值含测试期信息泄漏，仅供调试，不可用于正式结果")
-    if cached is None:
-        with open(os.path.join(PKL_DIR, f"{lake_name}_result.pkl"), "rb") as fh:
-            cached = pickle.load(fh)
-    return cached["embed_params"]
+                EMBED_PARAMS = json.load(f)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot load embedding parameters from {EMBED_PARAMS_PATH}. "
+                "Run code/00_data_generation/modal_compute_embedding_params.py first."
+            ) from exc
+    if lake_name not in EMBED_PARAMS:
+        raise KeyError(f"Embedding parameters missing for {lake_name}: {EMBED_PARAMS_PATH}")
+    return EMBED_PARAMS[lake_name]
 
 
 
 
 def apply_fdr_and_causal_evidence(df):
-    """跨全部行统一做一次 BH-FDR 多重比较校正，随后叠加时序保留规则。
-
-    产出三个字段：
-
-      statistically_significant = FDR显著 且 收敛诊断通过 且 obs_lag非空
-      lag_resolution            = not_significant / resolved(d>0) /
-                                  unresolved_contemporaneous(d=0) / rejected_reverse(d<0)
-      causal_evidence           = statistically_significant 且 d >= 0
-
-    施加顺序为「先 FDR 后过滤」：BH 的检验族由**预先设定的候选边集合**划定，
-    不因时序过滤而改变；过滤属结果解释层，作用于已校正的显著集合之上。
-
-    检验族要预先划定好范围，不能中途扩张——这批 420 条边是一个完整的检验族，
-    不要跟别的检验(比如湖泊间连通性)混在一起校正。
-    """
+    """Apply BH-FDR, convergence checks and the temporal retention rule.
+    依次应用 BH-FDR、收敛诊断与时序保留规则。"""
     from statsmodels.stats.multitest import multipletests
     df = df.copy()
     valid = (df["status"] == "OK") & df["p_value"].notna()
@@ -627,17 +507,12 @@ def apply_fdr_and_causal_evidence(df):
         _, fdr_p, _, _ = multipletests(df.loc[valid, "p_value"], alpha=0.05, method="fdr_bh")
         df.loc[valid, "p_fdr"] = fdr_p
 
-    # 第一层：统计显著性（不含任何时序判据）
+    # Statistical layer: BH-FDR plus convergence. / 统计层：BH-FDR 与收敛诊断。
     df["statistically_significant"] = (
         (df["p_fdr"] < 0.05) & df["convergence_diagnostic_pass"].fillna(False) & df["obs_lag"].notna()
     )
 
-    # 第二层：时序保留规则（temporal retention rule，2026-08-26 锁定，看结果前定死）
-    #   d > 0  → resolved：原因领先效应，符合因果时序，作为因果证据保留
-    #   d = 0  → unresolved_contemporaneous：同月响应，保留但标注方向未定
-    #   d < 0  → rejected_reverse：效应领先原因，不作为因果证据
-    # 施加顺序为「先 FDR 后过滤」：BH 的检验族由预先设定的候选边集合划定，
-    # 不因时序过滤而改变；过滤属于结果解释层，作用于已校正的显著集合之上。
+    # Temporal layer after FDR: d>0 resolved, d=0 unresolved, d<0 rejected. / FDR 后按时序分类：正滞后保留、零滞后未决、负滞后拒绝。
     lag = pd.to_numeric(df["obs_lag"], errors="coerce")
     df["lag_resolution"] = np.where(
         ~df["statistically_significant"], "not_significant",
@@ -649,13 +524,11 @@ def apply_fdr_and_causal_evidence(df):
     return df
 
 
-# ============================================================
-# 5. 湖泊间(inter-lake) WL 连通性检验
-# ============================================================
+# 5. Between-lake water-level connectivity / 湖间水位连通性
 
 def load_pair_panel_for_connectivity(lake_a, lake_b, forecast_horizon=FORECAST_HORIZON):
-    """两湖各自WL(清洗异常值+anomaly_mean合成)对齐到两湖日历并集，各自去季节化，
-    不跨湖dropna。返回(panel, embed_a, embed_b)。"""
+    """Build an aligned training panel for a directed lake-to-lake CCM test.
+    构建用于湖间有向 CCM 检验的对齐训练面板。"""
     with open(os.path.join(PKL_DIR, f"{lake_a}_result.pkl"), "rb") as f:
         cached_a = pickle.load(f)
     with open(os.path.join(PKL_DIR, f"{lake_b}_result.pkl"), "rb") as f:
@@ -674,16 +547,15 @@ def load_pair_panel_for_connectivity(lake_a, lake_b, forecast_horizon=FORECAST_H
     if forecast_horizon and forecast_horizon > 0:
         panel_deseason = panel_deseason.iloc[:-forecast_horizon]
 
-    embed_a = load_embed_params(lake_a, cached_a)["WL"]
-    embed_b = load_embed_params(lake_b, cached_b)["WL"]
+    embed_a = load_embed_params(lake_a)["WL"]
+    embed_b = load_embed_params(lake_b)["WL"]
     return panel_deseason, embed_a, embed_b
-# ============================================================
-# 6. 评估指标：RMSE / MAE / NSE / PBIAS + Diebold-Mariano 检验
-# ============================================================
-# 不用 KGE：它的 β 项是 mean(predicted)/mean(actual)，在去季节化后的零均值距平
-# 序列上分母近零、极不稳定。RMSE/MAE/NSE/PBIAS 都不依赖均值比值。
+# 6. Forecast metrics and Diebold–Mariano tests / 预测指标与 Diebold–Mariano 检验
+# KGE is omitted because its mean ratio is unstable for near-zero anomalies. / 距平均值接近零，故不使用均值比不稳定的 KGE。
 
 def _forecast_metrics(actual, predicted):
+    """Calculate forecast metrics after removing paired missing values.
+    去除成对缺测值后计算预测指标。"""
     actual = pd.Series(np.asarray(actual, dtype=float))
     predicted = pd.Series(np.asarray(predicted, dtype=float))
     mask = actual.notna() & predicted.notna()
@@ -701,8 +573,8 @@ def _forecast_metrics(actual, predicted):
 
 
 def diebold_mariano_test(actual, pred1, pred2, h=1, loss="squared"):
-    """Diebold & Mariano (1995)检验：两个预测序列的精度差异是否统计显著。
-    Newey-West长期方差估计(滞后阶数按原论文取h-1)处理预测误差的序列相关。"""
+    """Compare paired forecast errors using a Newey-West Diebold-Mariano test.
+    使用 Newey-West Diebold–Mariano 检验比较配对预测误差。"""
     a = np.asarray(actual, dtype=float)
     p1 = np.asarray(pred1, dtype=float)
     p2 = np.asarray(pred2, dtype=float)
@@ -728,6 +600,8 @@ def diebold_mariano_test(actual, pred1, pred2, h=1, loss="squared"):
 
 
 def _arima_fit_is_degenerate(model):
+    """Detect non-finite or implausibly large ARIMA fit values.
+    识别非有限或异常巨大的 ARIMA 拟合值。"""
     try:
         bse = np.asarray(model.arima_res_.bse, dtype=float)
     except Exception:
@@ -736,6 +610,8 @@ def _arima_fit_is_degenerate(model):
 
 
 def compute_vif(exog_df):
+    """Compute variance-inflation factors for numeric predictors.
+    计算数值预测变量的方差膨胀因子。"""
     from statsmodels.stats.outliers_influence import variance_inflation_factor
     X = exog_df.dropna()
     if X.shape[1] < 2 or len(X) <= X.shape[1]:
@@ -743,11 +619,11 @@ def compute_vif(exog_df):
     return pd.Series([variance_inflation_factor(X.values, i) for i in range(X.shape[1])], index=X.columns)
 
 
-# ============================================================
-# 7. XGBoost 超参数：全局一次性时间序列CV调优(只用训练期数据)
-# ============================================================
+# 7. Training-only global XGBoost tuning / 仅用训练期的全局 XGBoost 调参
 
 def expanding_window_splits(n, n_splits=3, min_train_frac=0.5):
+    """Create expanding-window training and validation splits.
+    创建扩展窗口训练与验证切分。"""
     min_train = int(n * min_train_frac)
     remaining = n - min_train
     fold_size = remaining // (n_splits + 1)
@@ -763,29 +639,13 @@ def expanding_window_splits(n, n_splits=3, min_train_frac=0.5):
     return splits
 
 
-# ============================================================
-# XGBoost特征工程：WL自身状态特征 + 外生变量antecedent window特征
-# ============================================================
-# 之前只有"WL_lag{1,2,3,6,12}"+"每个外生变量CCM选定滞后处的单点值"，基本是把
-# XGBoost当线性自回归模型在用，没发挥树模型的特征交互能力，而且水位这类有明显
-# persistence/惯性的变量，变化率(在涨还是在跌)、前期累积条件往往比单点滞后值
-# 更有信息量。这里补充：
-#   WL状态特征：滞后项 + 一阶/三阶变化率(WL_diff1/WL_diff3) + 3/6个月滚动均值
-#   (WL_mean3/WL_mean6) + 3个月滚动标准差(WL_std3)。
-#   外生变量：除了CCM选定滞后处的单点值，再加该滞后往前3/6个月的滚动均值
-#   (antecedent window，水文系统的前期累积水量条件通常比单月值更有解释力)。
-# 关键原则：全部XGBoost方法(AR_only/CCM_top/CCM_direct/CCM_ancestors/all_vars/
-# CCM_neighbor)必须用同一套构造函数，只有"喂哪些外生变量"因方法而异——不能
-# 只给CCM方法加这些特征、AR_only或all_vars不加，否则最终"CCM_ancestors比
-# AR_only准"这类结论，分不清是"CCM筛选真的有效"还是"CCM方法额外被喂了更好的
-# 人工特征"这两种解释，实验就不公平了。
-# 也刻意没有做的事(避免特征爆炸)：没有加日历/季节特征、没有加变量间交互项、
-# 没有给每个变量加更多滚动窗口——训练样本量只有~300个月量级，"all_vars"方法
-# 如果塞进6个气候变量，特征数已经逼近10(WL状态)+6*3(每个外生变量单点+两个
-# antecedent window)=28个，特征数:样本数已经到1:10左右，不宜再加。
+# XGBoost feature engineering / XGBoost 特征工程
+# Every method uses the same water-level state features; only its exogenous set changes. / 各方法使用相同水位状态特征，仅外生变量集合不同。
+# Selected exogenous lags also receive 3- and 6-month antecedent means. / 入选外生变量同时构造 3 与 6 个月前期均值。
 
 def build_wl_state_features(wl_series, wl_ar_lags=WL_AR_LAGS):
-    """WL自身状态特征，向量化版本(训练用)：对整段Series直接shift()/rolling()。"""
+    """Build lag, change and rolling-summary features for water level.
+    构建水位滞后、变化率与滚动汇总特征。"""
     lag1, lag2, lag4 = wl_series.shift(1), wl_series.shift(2), wl_series.shift(4)
     feats = {f"WL_lag{k}": wl_series.shift(k) for k in wl_ar_lags}
     feats["WL_diff1"] = lag1 - lag2
@@ -797,14 +657,8 @@ def build_wl_state_features(wl_series, wl_ar_lags=WL_AR_LAGS):
 
 
 def wl_state_features_from_getter(get_wl, t, wl_ar_lags=WL_AR_LAGS):
-    """跟build_wl_state_features()同一套构造规则，但通过get_wl(idx)这个可调用
-    对象逐点取值，不假设有一个现成的、可以直接shift()/rolling()的Series——
-    fit_xgboost_multi的整段递归预测用一个wl_values Series查表即可(见
-    wl_state_features_at)，rolling_origin_xgb每个起点的mini-walk则是"起点前
-    用固定的已知历史，起点后用这次mini-walk自己预测出的值"两段拼接，取值
-    逻辑不同，但特征定义公式必须完全一致，所以抽成这样一个通用版本，两处各自
-    传一个合适的get_wl。返回值必须跟build_wl_state_features()在同样输入下
-    逐位对齐，否则训练/预测两边特征定义不一致，模型学到的规律用错了地方。"""
+    """Build one water-level feature row from a history accessor.
+    根据历史值访问器构建一行水位特征。"""
     def get(offset):
         return get_wl(t - offset)
     row = {f"WL_lag{k}": get(k) for k in wl_ar_lags}
@@ -820,18 +674,16 @@ def wl_state_features_from_getter(get_wl, t, wl_ar_lags=WL_AR_LAGS):
 
 
 def wl_state_features_at(wl_values, t, wl_ar_lags=WL_AR_LAGS):
-    """wl_state_features_from_getter()的简单包装：整段历史都在一个Series里
-    (wl_values)时用这个，见fit_xgboost_multi。"""
+    """Build one water-level feature row at the requested position.
+    在指定位置构建一行水位特征。"""
     def get_wl(idx):
         return wl_values.iloc[idx] if idx >= 0 else np.nan
     return wl_state_features_from_getter(get_wl, t, wl_ar_lags=wl_ar_lags)
 
 
 def build_exog_antecedent_features(exog_df, exog_lags, windows=EXOG_ANTECEDENT_WINDOWS):
-    """每个被选中的外生变量：CCM选定滞后处的单点值 + 该滞后往前3/6个月的滚动
-    均值(antecedent window)。外生变量从不递归预测(始终用真实观测值/有限ffill，
-    见fit_xgboost_multi的"完美强迫"说明)，所以不需要像WL状态特征那样另外写
-    一个按位置查表的版本，训练和预测都可以直接向量化shift()/rolling()。"""
+    """Build lagged and antecedent-window features for exogenous variables.
+    构建外生变量的滞后与前期累积窗口特征。"""
     feats = {}
     for col, lag in exog_lags.items():
         feats[col] = exog_df[col].shift(lag)
@@ -841,9 +693,8 @@ def build_exog_antecedent_features(exog_df, exog_lags, windows=EXOG_ANTECEDENT_W
 
 
 def tune_xgboost_hyperparams(lake_names=LAKES, forecast_horizon=FORECAST_HORIZON):
-    """只用WL自身滞后(AR-only)特征，在全部指定湖泊的训练期内部做扩展窗口CV，挑一组
-    在多个湖上平均表现最好的超参数，全部湖泊统一使用(不按湖单独调，避免小样本
-    调参过拟合调参本身)。"""
+    """Tune one global XGBoost configuration using training-only time-series CV.
+    仅用训练期时间序列交叉验证选择一组全局 XGBoost 参数。"""
     import xgboost as xgb
 
     all_scores = {i: [] for i in range(len(XGB_PARAM_GRID))}
@@ -896,11 +747,11 @@ def tune_xgboost_hyperparams(lake_names=LAKES, forecast_horizon=FORECAST_HORIZON
     return best_params
 
 
-# ============================================================
-# 8. 拟合函数：SARIMA/SARIMAX/Persistence/XGBoost
-# ============================================================
+# 8. SARIMA, SARIMAX, persistence and XGBoost fitting / 模型拟合
 
 def fit_auto_sarima(wl_series, test_size=12, m=12):
+    """Fit and forecast an automatically selected seasonal ARIMA model.
+    拟合并预测自动选择的季节 ARIMA 模型。"""
     import pmdarima as pm
     wl_series = wl_series.sort_index().asfreq("MS")
     train_raw, test = wl_series[:-test_size], wl_series[-test_size:]
@@ -916,15 +767,13 @@ def fit_auto_sarima(wl_series, test_size=12, m=12):
 
 
 def fit_auto_sarimax_multi(wl_series, exog_df, exog_lags, test_size=12, m=12):
+    """Fit and forecast seasonal ARIMAX with selected exogenous variables.
+    使用选定外生变量拟合并预测季节 ARIMAX。"""
     import pmdarima as pm
     wl_series = wl_series.sort_index().asfreq("MS")
     exog_df = exog_df.sort_index().asfreq("MS")
     exog_shifted = pd.DataFrame({col: exog_df[col].shift(lag) for col, lag in exog_lags.items()}, index=exog_df.index)
-    # 测试期外生变量的ffill要在切片前、对完整(训练+测试)序列做，并且限流到
-    # MAX_FILLABLE_GAP_MONTHS：(1)只对窄切片ffill的话，如果测试期起始几个月本身
-    # 就是NaN，切片内部找不到锚点可垫，即使训练期紧邻着有合法观测值也补不到；
-    # (2)不限流的话，测试期哪怕连续缺测远超"长缺失"阈值，也会被一路拿训练期最后
-    # 一个值垫到底，跟训练期"长缺失应整段排除"的处理原则不一致。
+    # Fill the full series with the same gap limit before slicing the test period. / 切分测试期前按同一缺口上限填补完整序列。
     exog_shifted_ffilled = exog_shifted.ffill(limit=MAX_FILLABLE_GAP_MONTHS)
     combined = pd.concat([wl_series.rename("WL"), exog_shifted], axis=1).reindex(wl_series.index)
     train_raw, test_raw = combined.iloc[:-test_size], combined.iloc[-test_size:]
@@ -934,10 +783,7 @@ def fit_auto_sarimax_multi(wl_series, exog_df, exog_lags, test_size=12, m=12):
     test_exog = exog_shifted_ffilled.iloc[-test_size:]
     if test_exog.isna().any().any():
         raise ValueError("测试期外生变量缺口超过MAX_FILLABLE_GAP_MONTHS上限，SARIMAX无法完成整块预测")
-    # 不要改成「先取阶数、再按阶数重新拟合」：auto_arima 在搜索中一并决定截距项
-    # (d=1 时关闭截距)，只钉 (p,d,q)(P,D,Q,m) 重拟合会得到另一个模型——实测同一组
-    # 阶数下 27/31 个方法的 RMSE 改变，Split_Lake 的 SARIMA 从 1.2426 变成 1.2883。
-    # 阶数搜索本身经实测是稳定的(两次独立运行 31/31 一致)，无需固化。
+    # Return the fitted auto_arima model because refitting fixed orders can change its intercept choice. / 直接返回已拟合模型，避免固定阶数重拟合改变截距选择。
     model = pm.auto_arima(train_wl, X=train_exog.values, seasonal=True, m=m,
                           stepwise=True, suppress_warnings=True, error_action="ignore")
     if _arima_fit_is_degenerate(model):
@@ -952,7 +798,8 @@ def fit_auto_sarimax_multi(wl_series, exog_df, exog_lags, test_size=12, m=12):
 
 
 def fit_persistence(wl_series, test_size=12):
-    """naive基线：预测=最后一个已知观测值(重复到底)。"""
+    """Forecast every test month with the final observed training value.
+    用训练期最后一个观测值预测全部测试月份。"""
     wl_series = wl_series.sort_index().asfreq("MS")
     train, test = wl_series.iloc[:-test_size], wl_series.iloc[-test_size:]
     last_known = train.iloc[-1]
@@ -961,13 +808,8 @@ def fit_persistence(wl_series, test_size=12):
 
 
 def fit_xgboost_multi(wl_series, exog_df, exog_lags, xgb_params, test_size=12, wl_ar_lags=WL_AR_LAGS):
-    """WL自身滞后特征在测试期内做真正的递归多步预测：预测第t个月时，如果"t减k个月"
-    这个位置本身也落在测试期里，用模型自己之前预测出来的值，不用真实观测值。外生
-    变量依然用真实观测值("完美强迫"假设)。
-
-    特征工程(WL状态特征+外生变量antecedent window特征)对全部方法用同一套
-    build_wl_state_features/build_exog_antecedent_features构造规则，只有
-    "喂哪些外生变量"因方法而异，详见这两个函数前的说明。"""
+    """Fit XGBoost and recursively forecast the full test horizon.
+    拟合 XGBoost 并递归预测完整测试期。"""
     import xgboost as xgb
 
     wl_series = wl_series.sort_index().asfreq("MS")
@@ -986,18 +828,10 @@ def fit_xgboost_multi(wl_series, exog_df, exog_lags, xgb_params, test_size=12, w
     model = xgb.XGBRegressor(subsample=0.8, colsample_bytree=0.8, random_state=0, **xgb_params)
     model.fit(train_X, train_wl)
 
-    # 递归预测时WL_lag特征往训练期回看，要用跟训练时同一套"短缺失已填补"的历史，
-    # 不能用原始未填补的wl_series——否则训练期里任何一个短缺口(哪怕只有1个月、
-    # 明明在MAX_FILLABLE_GAP_MONTHS允许填补的范围内)一旦被某个WL_lag回看到，
-    # 递归预测第一步就会直接崩(实测验证过：Playgreen_Lake训练期最后一个月
-    # 2021-11本身缺测，WL_lag1在测试期第一步(2021-12)回看到它，如果不修，
-    # 整个方法直接报错退出，而不是"填补后正常预测")。测试期部分保留原始值即可，
-    # 反正下面的循环会按顺序把每个测试期位置都覆盖成模型自己的预测值。
+    # Recursive lag features use the same short-gap-filled history as training. / 递归滞后特征使用与训练一致的短缺口填补历史。
     wl_values = wl_series.copy()
     wl_values.iloc[:train_end] = _fill_training_block(wl_series.iloc[:train_end])
-    # ffill整段(训练+测试)后再切出测试段，并且限流到MAX_FILLABLE_GAP_MONTHS：
-    # 只ffill测试期窄切片的话，测试期开头连续几个月本身缺测就补不到训练期的值；
-    # 不限流的话，测试期缺口再长也会被一路垫到底，跟"长缺失应整段排除"矛盾。
+    # Limit forward filling across train and test to short gaps only. / 训练与测试期的前向填补仅覆盖短缺口。
     exog_shifted_test = exog_shifted.ffill(limit=MAX_FILLABLE_GAP_MONTHS).iloc[train_end:]
 
     preds = []
@@ -1010,19 +844,9 @@ def fit_xgboost_multi(wl_series, exog_df, exog_lags, xgb_params, test_size=12, w
             row[col] = exog_shifted_test.iloc[i][col]
         x_row = pd.DataFrame([row])[train_X.columns]
         if x_row.isna().any(axis=1).iloc[0]:
-            # 某个WL_lag回看到了一个真正超过MAX_FILLABLE_GAP_MONTHS、填不了的长缺口
-            # (比如Playgreen_Lake训练期末尾2020-11~2021-03连续5个月缺测)。不应该
-            # 因为个别月份预测不了就让整个37个月的结果全部作废——只跳过这一步，
-            # 留NaN(_forecast_metrics的NaN掩码会正确把这个月排除在评估外)，
-            # wl_values这个位置也保持NaN，后面步骤如果WL_lag回看到它会一样正确地
-            # 传播成NaN(不会拿一个不存在的预测值当真)。等回看窗口滑过这段缺口，
-            # 后面的月份该能正常预测就会恢复正常。
+            # Keep an unforecastable month as NaN instead of discarding the full horizon. / 无法预测的月份保留 NaN，不废弃整个预测期。
             preds.append(np.nan)
-            wl_values.iloc[t] = np.nan  # 显式清空，不能让这个位置保留wl_series.copy()
-                                        # 带过来的原始真实观测值，否则后续步骤的WL_lag
-                                        # 回看到这里会悄悄用上测试期真值，重新打开
-                                        # "递归预测不该偷看测试期真实观测值"这个已经
-                                        # 修过的泄漏口子。
+            wl_values.iloc[t] = np.nan  # Prevent later lags from using the true test value. / 防止后续滞后特征使用测试期真值。
             n_skipped += 1
             continue
         pred_t = float(model.predict(x_row)[0])
@@ -1041,13 +865,11 @@ def fit_xgboost_multi(wl_series, exog_df, exog_lags, xgb_params, test_size=12, w
             "wl_ar_lags": wl_ar_lags, "train_X_columns": list(train_X.columns), "train_end": train_end}
 
 
-# ============================================================
-# 9. 滚动起点(rolling-origin)评估
-# ============================================================
+# 9. Rolling-origin evaluation / 滚动起点评估
 
 def rolling_origin_xgb(fit_result, horizons=ROLLING_HORIZONS):
-    """XGBoost已经是递归实现，逐起点滚动几乎不加成本。每个起点t0独立mini-walk，
-    互不共享predicted history。"""
+    """Evaluate recursive XGBoost forecasts at rolling origins.
+    在滚动起点上评估递归 XGBoost 预测。"""
     model = fit_result["model"]
     wl_series = fit_result["wl_series"]
     exog_shifted = fit_result["exog_shifted"]
@@ -1055,34 +877,23 @@ def rolling_origin_xgb(fit_result, horizons=ROLLING_HORIZONS):
     train_X_columns = fit_result["train_X_columns"]
     train_end = fit_result["train_end"]
 
-    # 限流到MAX_FILLABLE_GAP_MONTHS：测试期任意起点的外生变量缺口如果超过这个
-    # 上限，不应该被一路垫到底，让下面每个起点的构造特征在遇到超限缺口时正常
-    # 触发NaN检查、跳过该起点，而不是悄悄拿很久以前的值填。
+    # Limit filling so origins with long exogenous gaps are skipped. / 限制填补长度，跳过外生变量长缺口对应的起点。
     exog_ffilled = exog_shifted.ffill(limit=MAX_FILLABLE_GAP_MONTHS)
     n = len(wl_series)
     max_h = max(horizons)
-    # 记录每条(actual,predicted)对应的起点位置t0(不只是位置对齐的list)：
-    # DM检验要比较两个方法在同一个horizon上的预测精度，前提是两个方法用的是
-    # 同一批起点——不同方法因为各自的NaN/长缺口跳过情况不同，成功产出预测的
-    # 起点集合可能不完全一样，光看list位置对不上号，必须靠t0对齐取交集。
+    # Retain origin indices so DM comparisons use matched origins. / 保留起点索引，使 DM 检验使用相同起点。
     pooled = {h: {"t0": [], "actual": [], "pred": []} for h in horizons}
 
     for t0 in range(train_end - 1, n - 1):
         steps_available = min(max_h, n - 1 - t0)
         if steps_available < 1:
             continue
-        # 跟fit_xgboost_multi里的道理一样：回看用的历史要跟训练时同一套"短缺失已
-        # 填补"处理，不能用原始未填补的wl_series——否则任何一个短缺口(哪怕在
-        # MAX_FILLABLE_GAP_MONTHS允许范围内)一旦被某个WL_lag回看到，这个起点就会
-        # 被跳过(ok=False)，白白损失掉本可以正常预测的样本。长于limit的缺口
-        # 依然保持NaN，该起点该跳过还是会跳过，不受影响。
+        # Use the training-consistent short-gap-filled history. / 使用与训练一致的短缺口填补历史。
         wl_known = _fill_training_block(wl_series.iloc[: t0 + 1])
         mini_preds = {}
 
         def get_wl(idx):
-            # 闭包捕获当前t0/wl_known/mini_preds(mini_preds是原地更新，不是
-            # 重新赋值，闭包读到的始终是最新内容)：idx落在起点t0之后就查这次
-            # mini-walk自己预测出的值，落在t0及之前就查固定的已知历史。
+            # Use recursive predictions after the origin and known history before it. / 起点后使用递归预测，起点前使用已知历史。
             if idx > t0:
                 return mini_preds.get(idx, np.nan)
             elif idx >= 0:
@@ -1117,13 +928,12 @@ def rolling_origin_xgb(fit_result, horizons=ROLLING_HORIZONS):
 
 
 def rolling_origin_sarimax(fit_result, wl_series, test_size=FORECAST_HORIZON, horizons=ROLLING_HORIZONS):
-    """SARIMAX/SARIMA滚动起点评估：用pmdarima的update()方法做轻量状态更新，不是
-    每个起点都重新完整网格搜索定阶——这是计算成本约束下的工程简化，不是教科书
-    验证过的、跟完整滚动重新拟合统计上等价的方法，写方法部分要如实说明。"""
+    """Evaluate SARIMA or SARIMAX forecasts at rolling origins.
+    在滚动起点上评估 SARIMA 或 SARIMAX 预测。"""
     model = fit_result["model"]
     has_exog = fit_result.get("has_exog", False)
     exog_shifted = fit_result.get("exog_shifted")
-    # 限流到MAX_FILLABLE_GAP_MONTHS，理由同rolling_origin_xgb。
+    # Apply the same short-gap limit as rolling_origin_xgb. / 使用与 rolling_origin_xgb 相同的短缺口上限。
     exog_ffilled = exog_shifted.ffill(limit=MAX_FILLABLE_GAP_MONTHS) if has_exog else None
 
     wl_series = wl_series.sort_index().asfreq("MS")
@@ -1131,8 +941,7 @@ def rolling_origin_sarimax(fit_result, wl_series, test_size=FORECAST_HORIZON, ho
     train_end = n - test_size
     max_h = max(horizons)
 
-    # 同样记录t0，理由同rolling_origin_xgb：两个方法在同一horizon上做DM比较前，
-    # 必须先按起点对齐取交集，不能假设两个方法产出的起点list天然一一对应。
+    # Retain origin indices for matched DM comparisons. / 保留起点索引用于配对 DM 检验。
     pooled = {h: {"t0": [], "actual": [], "pred": []} for h in horizons}
     state_end = train_end - 1
 
@@ -1182,10 +991,8 @@ def rolling_origin_sarimax(fit_result, wl_series, test_size=FORECAST_HORIZON, ho
 
 
 def rolling_origin_persistence(wl_series, horizons=ROLLING_HORIZONS, test_size=FORECAST_HORIZON):
-    """Persistence基线没有一个可以调用rolling_origin_xgb/sarimax的"model"对象——
-    它本身就是"重复起点当月的已知值"，不需要拟合。单独补一个滚动起点版本，
-    只是为了让DM检验里涉及Persistence的两个比较也能用跟其余方法同样的"同一
-    horizon、同一批起点"口径，而不是退回到单起点37个月轨迹那种错误结构。"""
+    """Evaluate persistence forecasts at rolling origins.
+    在滚动起点上评估持续性预测。"""
     wl_series = wl_series.sort_index().asfreq("MS")
     n = len(wl_series)
     train_end = n - test_size
@@ -1210,10 +1017,8 @@ def rolling_origin_persistence(wl_series, horizons=ROLLING_HORIZONS, test_size=F
 
 
 def align_rolling_by_origin(roll1, roll2, h):
-    """两个方法在同一horizon h上的滚动起点结果按t0取交集对齐，返回
-    (actual, pred1, pred2)——DM检验要求比较的是"同一批预测目标"，不能假设两个
-    方法的起点list天然一一对应(不同方法因为各自的NaN/缺口跳过情况不同，成功
-    产出预测的起点集合可能不完全一样)。"""
+    """Align two rolling forecasts on their shared origin indices.
+    按共同起点索引对齐两组滚动预测。"""
     if h not in roll1 or h not in roll2:
         return None, None, None
     r1, r2 = roll1[h], roll2[h]
@@ -1228,13 +1033,13 @@ def align_rolling_by_origin(roll1, roll2, h):
     return actual, pred1, pred2
 
 
-# ============================================================
-# 10. 候选变量选择：从420条边merged_fdr.csv的causal_evidence读
-# ============================================================
+# 10. Predictor selection from causal_evidence / 根据 causal_evidence 选择预测变量
 
 
 
 def build_new_causal_network(lake_edges_df):
+    """Build a directed graph from retained causal-evidence edges.
+    根据保留的因果证据边构建有向图。"""
     G = nx.DiGraph()
     for _, row in lake_edges_df.iterrows():
         G.add_edge(row["cause"], row["effect"], rho=row["obs_rho"], lag=row["obs_lag"], p_fdr=row["p_fdr"])
@@ -1246,27 +1051,15 @@ def build_new_causal_network(lake_edges_df):
 
 
 def select_direct_predictor_lags(lake_edges_df):
+    """Return direct driver lags for one target variable.
+    返回单个目标变量的直接驱动滞后。"""
     wl_edges = lake_edges_df[lake_edges_df["effect"] == "WL"]
     return {row["cause"]: int(row["obs_lag"]) for _, row in wl_edges.iterrows()}
 
 
 def best_positive_lag(scan):
-    """从 lag_scan() 的结果里挑"预测可用"的最优滞后。
-
-    **实际下界是 lag >= 1，不是函数名暗示的 >= 0**：d=0 的外生变量在任何 h>=1 的
-    预测中都需要预测起点当期的真实值，不构成可用的预测信息（函数名沿用历史命名
-    以免影响调用点）。
-
-    只在可用范围内取 rho 最大值，
-    不能对全部lag(含负数)取全局argmax再判断是否>=0——那样如果全局最优恰好是
-    负的，就会把整个变量直接丢掉，即使旁边有一个rho几乎一样高的正滞后完全可用
-    (比如lag=-2 rho=0.61、lag=+3 rho=0.60，两者只差0.01，全局argmax会选中
-    lag=-2导致变量被排除，但lag=+3明明是可以直接拿来做预测特征的)。负滞后
-    本身也不是"稍差一点"的选项——lag_scan()里effect往未来位移l步再跟cause比较，
-    l<0时相当于用cause[t]去预测effect[t-2]这种"结果已经在原因之前发生"的关系，
-    对预测毫无用处，不是"次优"而是"根本不能用"，所以要先筛掉负滞后再取最优，
-    不是取全局最优再筛。返回(l_star, rho_star)，如果lag>=0里没有任何有效rho
-    则返回(None, None)。"""
+    """Return the strongest forecast-usable positive lag.
+    返回技巧值最高且可用于预测的正滞后。"""
     valid = scan[(scan["lag"] >= 1) & scan["rho"].notna()]
     if valid.empty:
         return None, None
@@ -1275,18 +1068,8 @@ def best_positive_lag(scan):
 
 
 def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix=""):
-    """WL 的全部祖先变量 → 预测特征滞后。
-
-    有直接边的祖先原先直接沿用因果域的 obs_lag，**包括 d = 0**——而 direct 与
-    neighbor 两个分支都在上游把 d < 1 的边送去 forecast_constrained_lag 重新求
-    最优。结果是同一个湖、同一个变量在 CCM_direct 里滞后被修正为 >= 1，在
-    CCM_ancestors 里仍以 d = 0 入模（实测 4 例：Kalamalka/Okanagan 的 R、
-    Lake_of_the_Woods/Playgreen 的 RegFlow），使 CCM_ancestors 及继承其变量集的
-    CCM_neighbor 用到目标月份当期的外生观测，违反方法论声明的预测域
-    ℓ ∈ [1, 12]，且 min_exog_lag = 0 让这些方法在任何预见期下都需要起点之后的信息。
-    此处补上与另两个分支相同的处理：不整条丢弃，在预测域内重新求最优滞后。
-
-    """
+    """Select forecast lags for all retained ancestors of the target.
+    为目标变量的全部保留祖先选择预测滞后。"""
     if "WL" not in G.nodes():
         return {}
     ancestor_vars = sorted(nx.ancestors(G, "WL"))
@@ -1298,7 +1081,7 @@ def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix=""):
             if edge_lag >= FORECAST_LAG_MIN:
                 lags[var] = edge_lag
                 continue
-            # 时序保留规则已排除 d < 0，此处只可能是 d = 0。
+            # Negative lags were already rejected; only d=0 can remain here. / 负滞后已被拒绝，此处仅可能剩 d=0。
             new_lag, new_rho = forecast_constrained_lag(
                 ccm_train_panel, var, "WL", embed_params)
             if new_lag is None:
@@ -1321,49 +1104,20 @@ def select_ancestor_lags(G, ccm_train_panel, embed_params, log_prefix=""):
 
 def select_all_var_lags_xcorr(ccm_train_panel, embed_params, wl_col="WL",
                               min_lag=1, max_lag=12, min_obs=20, log_prefix=""):
-    """关联式基线（All_vars / Stepwise）的滞后选择：用与目标水位的滞后 Pearson 相关，
-    不使用任何 CCM 信息。
-
-    为什么需要它
-    ------------
-    早期实现用 `lag_scan()`（CCM 交叉映射）为基线挑滞后，导致所谓"非因果基线"
-    实际继承了 CCM 的滞后识别结果——而识别正确滞后正是
-    CCM 贡献的主要组成部分。这使 RQ3（因果信息是否带来额外预测价值）被系统性低估。
-    实测：改用互相关后，45 个变量中 38 个（84%）的滞后发生改变。
-
-    与 CCM 保持一致的三点（保证可比）
-    ----------------------------------
-    1. 相同的数据预处理（同一 ccm_train_panel）；
-    2. 相同的 0–12 个月搜索窗口；
-    3. 相同的 conditional-information 假设——**不对基线单独施加 d ≥ h 的约束**。
-       CCM 侧同样没有该约束；若只给基线加，比较反而不公平
-       （CCM 取 d=5、基线取 d=0，在 12 个月预见期下同样需要预测起点之后的外生值）。
-
-    设计选择
-    --------
-    · 取 |r| 而非 r：正负关联都可能含预测信息（如蒸发增加对应水位下降）；
-    · 并列时取较短滞后（严格大于比较自然实现 parsimony）；
-    · 仅使用训练期数据。
-
-    预期表现（如实报告，不作为"基线选错"的证据）
-    ----------------------------------------------
-    RegFlow 在多数湖泊会被选到 d=0 且 |r| 极高（Split 达 0.987），因为当月放水量
-    与当月水位近乎完全线性相关。Pearson 回答的是"哪个滞后下线性关联最强"，
-    并不判断因果方向、操作反馈或未来可得性——锁定 d=0 是关联式基准应当允许
-    表现出的局限，而非实现缺陷。
-    """
+    """Select baseline predictor lags by training-only cross-correlation.
+    仅根据训练期互相关选择基线预测变量滞后。"""
     lags = {}
     for var in embed_params:
         if var == wl_col or var not in ccm_train_panel.columns:
             continue
         best_lag, best_abs_r = None, -1.0
-        for lag in range(min_lag, max_lag + 1):    # d>=1：排除同期，与 CCM 侧对称
+        for lag in range(min_lag, max_lag + 1):    # d>=1 excludes contemporaneous inputs. / d>=1 排除同期输入。
             pair = pd.concat([ccm_train_panel[var].shift(lag),
                               ccm_train_panel[wl_col]], axis=1).dropna()
             if len(pair) < min_obs:
                 continue
             r = pair.iloc[:, 0].corr(pair.iloc[:, 1])
-            if np.isfinite(r) and abs(r) > best_abs_r:     # 严格大于 → 并列取较短滞后
+            if np.isfinite(r) and abs(r) > best_abs_r:     # Strict comparison keeps the shorter tied lag. / 严格比较使并列时保留较短滞后。
                 best_abs_r, best_lag = abs(r), lag
         if best_lag is not None:
             lags[var] = best_lag
@@ -1371,33 +1125,14 @@ def select_all_var_lags_xcorr(ccm_train_panel, embed_params, wl_col="WL",
     return lags
 
 
-FORECAST_LAG_MIN = 1        # 预测特征的滞后下界：d=0 需要预测起点当期的真实值
+FORECAST_LAG_MIN = 1        # d=0 would require the current true value. / d=0 需要当期真实值，故不用于预测。
 FORECAST_LAG_MAX = 12
 
 
 def forecast_constrained_lag(panel_df, cause, effect, embed_params,
                              lag_min=FORECAST_LAG_MIN, lag_max=FORECAST_LAG_MAX):
-    """在预测可用的滞后窗口内重新求最优滞后（forecast-constrained optimal lag）。
-
-    因果分析与预测特征构建是**两个预先定义的优化问题**，各自的候选滞后域不同：
-
-        d*_causal   = argmax_{d ∈ [-12, 12]} rho(d)      ← 因果解释，符号即时序判据
-        d*_forecast = argmax_{d ∈ [1, 12]}  rho(d)       ← 预测特征，d=0 不可用
-
-    因此当某条边的 d*_causal = 0 时，正确做法**不是整条丢弃**，而是在预测域内
-    重新求解。这与 CCM 的标准滞后选择原则一致——在预先设定的滞后域内比较
-    cross-map skill 并取最优（Ye et al., 2015；Martin et al., 2024, Chaos）。
-    水文 CCM 应用亦采用同一原则（"the optimal time lag is decided when the
-    cross map skill is largest"）。
-
-    两点必须在方法论中写明：
-    1. 预测域 [1, 12] 是**事先声明**的，不是看到结果后选定，否则构成事后挑选；
-    2. 边的**显著性**来自因果域上的 IAAFT 检验（max over 25 lags），
-       此处仅重新选择特征滞后，不对该滞后另作显著性声明。
-
-    实现上复用 `lag_scan()`——它只逐滞后计算 rho，**不涉及替代序列**，
-    因此代价是秒级的 pyEDM 调用，无需重跑显著性检验。
-    """
+    """Re-select the best CCM lag within the forecast-usable lag range.
+    在可用于预测的滞后范围内重新选择最佳 CCM 滞后。"""
     scan = lag_scan(panel_df, cause, effect, embed_params,
                     lags=range(lag_min, lag_max + 1))
     if scan.empty:
@@ -1410,13 +1145,15 @@ def forecast_constrained_lag(panel_df, cause, effect, embed_params,
 
 
 def load_neighbor_lags(connectivity_df, lake_name):
-    """从重新验证过的湖泊间连通性结果里，找出对本湖泊WL有显著直接因果关系的邻居
-    湖泊，返回{邻居湖泊名: 滞后月数}。"""
+    """Return retained incoming lake-neighbour lags for one target lake.
+    返回指向目标湖泊的保留邻湖滞后。"""
     sub = connectivity_df[(connectivity_df["effect_lake"] == lake_name) & (connectivity_df["causal_evidence"] == True)]
     return {row["cause_lake"]: int(row["obs_lag"]) for _, row in sub.iterrows()}
 
 
 def load_neighbor_wl_series(neighbor_lake_name):
+    """Load and deseasonalise one neighbouring lake's water-level series.
+    读取并去季节化单个邻湖水位序列。"""
     pkl_path = os.path.join(PKL_DIR, f"{neighbor_lake_name}_result.pkl")
     if not os.path.exists(pkl_path):
         return None
@@ -1428,8 +1165,8 @@ def load_neighbor_wl_series(neighbor_lake_name):
     return deseasonalize(combined_wl, train_end=train_end)
 if __name__ == "__main__":
     raise SystemExit(
-        "ccm_forecast_core.py 是共享库，不应直接运行。论文结果的产出入口：\n"
-        "  湖内 CCM   modal run code/02_within_lake_ccm/run_within_lake_ccm.py\n"
-        "  湖间 CCM   modal run code/03_inter_lake_ccm/run_inter_lake_ccm.py\n"
+        "analysis_core.py 是核心函数库，不应直接运行。论文结果的 Modal 执行入口：\n"
+        "  湖内 CCM   modal run --detach code/02_within_lake_ccm/modal_within_lake_ccm.py\n"
+        "  湖间 CCM   modal run --detach code/03_inter_lake_ccm/modal_inter_lake_ccm.py\n"
         "  条件预测   modal run --detach code/04_forecast/modal_forecast_synchrony_filtered.py::detached"
     )

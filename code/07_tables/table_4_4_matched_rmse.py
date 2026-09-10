@@ -1,5 +1,8 @@
 """Table 4.X — matched-sample 平均 RMSE（RQ3）。
 
+Local table rendering from downloaded results; no model is fitted here.
+仅在本地根据已下载结果生成表格；本脚本不拟合模型。
+
 按模型族分成两个 block，每个 block 内部所有策略使用**完全相同的湖泊集合**，
 因此块内各行可以直接比较；两个 block 之间不可比，也不应比较。
 
@@ -69,7 +72,7 @@ def main():
             rows.append(rec)
             md_rows.append(f"| {name} | " + " | ".join(cells) + " |")
 
-    # CCM neighbour：样本随预见期变化，只做脚注
+    # Neighbour sample sizes vary by horizon and are reported in a note. / 邻湖样本量随预见期变化，仅在表注中报告。
     foot = []
     for key, name in NEIGHBOUR:
         s = v[v.method == key]
@@ -103,7 +106,7 @@ def main():
     md_path.write_text(md + "\n")
     print(f"wrote {md_path}")
 
-    # ------------------------------------------------------------- 核对数字
+    # Numerical checks / 数值核对
     for block, methods in BLOCKS:
         lakes = matched_lakes(v, [k for k, _ in methods])
         print(f"\n{block}: matched on {len(lakes)} lakes — "

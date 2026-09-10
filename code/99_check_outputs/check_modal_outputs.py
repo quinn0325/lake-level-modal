@@ -1,4 +1,5 @@
 """Check downloaded Modal outputs and deterministic local products.
+检查已下载的 Modal 输出及本地确定性生成的成果。
 
 This script does not rerun CCM or forecasting. It verifies that the outputs
 downloaded from Modal have the expected shapes and, when reference files are

@@ -1,11 +1,14 @@
 """Appendix Table C1 — 通过 CCM 检验的 driver → WL 关系（正文 §4.2 的完整数值）。
 
+Local table rendering from downloaded results; this script does not rerun CCM.
+仅在本地根据已下载结果生成表格；本脚本不重新运行 CCM。
+
 正文只给汇总句子与 Figure 4.2，逐条数值放附录。本脚本从
 ch4_tables/T5_within_lake_edges.csv（420 条湖内候选边，2026-08-31 重跑）
 里筛出 effect == "WL" 且 statistically_significant 为真的 24 条。
 
 注意 statistically_significant 字段本身已经包含收敛诊断
-（见 ccm_forecast_core.apply_fdr_and_causal_evidence），
+（见 analysis_core.apply_fdr_and_causal_evidence），
 因此这 24 条即"BH-FDR 显著 且 收敛诊断通过"的全集，
 不需要再额外与 convergence_diagnostic_pass 取交集。
 
@@ -62,7 +65,7 @@ def main():
     out.to_csv(csv_path, index=False)
     print(f"wrote {csv_path}  ({len(out)} rows)")
 
-    # ------------------------------------------------------------- markdown
+    # Markdown output / Markdown 输出
     head = ("| Lake | Driver | ρ | d (months) | FDR p | Kendall τ_L | n | E "
             "| Temporal class |")
     rule = "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"

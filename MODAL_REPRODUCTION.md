@@ -3,6 +3,15 @@
 This is the compact command sheet for the single official reproduction route.
 For context and expected outputs, see `README.md`.
 
+For the analysis stages, run only the `modal_*.py` files listed below. The shared algorithms in
+`code/01_analysis_core/analysis_core.py` are imported by those stages and are
+not a separate command or a local alternative.
+
+Run this route only with a newly created, empty Modal Volume named `ccm-data`.
+Do not reuse a Volume containing shards from an earlier code version or a run
+with different parameters. Merge only when the two shard counts below are
+exactly 420 and 90, respectively.
+
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -10,22 +19,23 @@ pip install -r requirements.txt
 modal setup
 
 modal volume create ccm-data
-modal secret create cds-api CDSAPI_URL=... CDSAPI_KEY=...
-modal volume put ccm-data /path/to/HydroLAKES_polys_v10_shp HydroLAKES_polys_v10_shp
-modal volume put ccm-data /path/to/hybas_na_lev12_v1c hybas_na_lev12_v1c
+modal secret create cds-api CDSAPI_URL=https://cds.climate.copernicus.eu/api CDSAPI_KEY=YOUR_PERSONAL_ACCESS_TOKEN
+# Download and extract the exact source products listed in README.md first.
+modal volume put ccm-data /absolute/path/to/source_data/HydroLAKES_polys_v10_shp HydroLAKES_polys_v10_shp
+modal volume put ccm-data /absolute/path/to/source_data/hybas_na_lev12_v1c hybas_na_lev12_v1c
 
 modal run code/00_data_generation/modal_build_lake_panels.py::fetch_only
 modal run code/00_data_generation/modal_build_lake_panels.py::process_only
 
-modal run code/00_data_generation/recompute_embed_params.py
+modal run code/00_data_generation/modal_compute_embedding_params.py
 
-modal run --detach code/02_within_lake_ccm/run_within_lake_ccm.py
+modal run --detach code/02_within_lake_ccm/modal_within_lake_ccm.py
 modal volume ls ccm-data lake_results/final_v3/edges | grep -c json
-modal run code/02_within_lake_ccm/run_within_lake_ccm.py --merge-only
+modal run code/02_within_lake_ccm/modal_within_lake_ccm.py --merge-only
 
-modal run --detach code/03_inter_lake_ccm/run_inter_lake_ccm.py
+modal run --detach code/03_inter_lake_ccm/modal_inter_lake_ccm.py
 modal volume ls ccm-data lake_results/final_v3/inter_edges | grep -c json
-modal run code/03_inter_lake_ccm/run_inter_lake_ccm.py --merge-only
+modal run code/03_inter_lake_ccm/modal_inter_lake_ccm.py --merge-only
 
 modal run --detach code/04_forecast/modal_forecast_synchrony_filtered.py::detached
 

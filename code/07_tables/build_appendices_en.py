@@ -1,5 +1,8 @@
 """English edition of the appendix tables.
 
+Local table rendering only; this script does not rerun CCM or forecasting.
+仅在本地生成英文表格；本脚本不重新运行 CCM 或预测分析。
+
 Reads the CSVs written by build_appendices.py and re-renders them with English
 titles and notes, then assembles a single Markdown file for conversion to Word.
 The Chinese edition is left untouched; only the surrounding prose differs, the
@@ -7,8 +10,8 @@ numbers are the same files.
 
 Run
 ---
-    python code/07_tables/build_appendices.py       # writes the CSVs
-    python code/07_tables/build_appendices_en.py    # English titles and notes
+    python code/07_tables/build_appendices.py       # Write CSVs / 生成 CSV
+    python code/07_tables/build_appendices_en.py    # Add English text / 添加英文文本
     pandoc appendices/Appendices_EN.md -o appendices/Appendices_EN.docx \
         --from=markdown+pipe_tables
 
@@ -28,7 +31,7 @@ EN = OUT / "en"
 COL_DECIMALS = {"coverage_pct": 1, "p_value": 4, "p_fdr": 4, "kendall_p": 4,
                 "dm_stat": 3, "S_ij": 3, "cv_rmse_m": 5, "learning_rate": 2}
 
-# stem -> (title, note, decimals)
+# File stem -> title, note and decimals. / 文件名主体 → 标题、表注与小数位。
 META = {
     "A1_lakes_and_stations": (
         "Table A1. Study lakes, water-level gauges and regulated-outflow gauges",
@@ -134,7 +137,7 @@ FIG_B1 = (
     "negative lag).")
 
 
-# 表格内仍为中文的单元格：A1 的备注列与 C2 的状态标记
+# Translate remaining Chinese cells in A1 and C2. / 翻译 A1 与 C2 中残留的中文单元格。
 CELL_EN = {
     "无外生": "no exogenous",
     "不适用": "not applicable",

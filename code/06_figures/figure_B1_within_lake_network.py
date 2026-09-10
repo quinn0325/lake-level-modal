@@ -1,5 +1,8 @@
 """附录图B1 — 420 条湖内候选关系的支持情况总览。
 
+Local rendering from downloaded results; this script does not rerun CCM.
+仅在本地读取已下载结果并绘图；本脚本不重新运行 CCM。
+
 替代逐条列出 420 行的长表：行为 42 种有向变量对（7 × 6，按原因变量分块），
 列为 10 个湖，格内着色表示该湖该关系通过了 BH-FDR 与收敛诊断，颜色深浅为
 cross-map skill ρ，未通过者留白。一张图承载全部 420 个检验结果，同时保留
@@ -37,7 +40,7 @@ SYSTEMS = [
 ]
 LAKES = [lk for _, g in SYSTEMS for lk in g]
 LABEL = {lk: lk.replace("_Lake", "").replace("_", " ") for lk in LAKES}
-LABEL["Lake_of_the_Woods"] = "LotW"        # 列首空间有限，用简称
+LABEL["Lake_of_the_Woods"] = "LotW"        # Short label for limited width. / 列宽有限，使用简称。
 
 VARS = ["RegFlow", "R", "P", "Evap", "SWE", "T", "WL"]
 CMAP = LinearSegmentedColormap.from_list(
@@ -73,7 +76,7 @@ def main():
     supported = t5[t5.statistically_significant].copy()
     sup = supported.set_index(["lake", "cause", "effect"])
 
-    pairs = [(c, e) for c in VARS for e in VARS if c != e]      # 42 行
+    pairs = [(c, e) for c in VARS for e in VARS if c != e]      # 42 directed pairs / 42 条有向变量对
     ny, nx = len(pairs), len(LAKES)
     pair_counts = supported.groupby(["cause", "effect"]).lake.nunique()
 
@@ -121,13 +124,12 @@ def main():
     for sp in ax.spines.values():
         sp.set_visible(False)
 
-    # 每 6 行一个原因变量分块
+    # Separate six-row cause blocks. / 每 6 行分隔一个原因变量块。
     for b in range(1, len(VARS)):
         ax.axhline(b * 6, color="0.40", lw=0.72, zorder=5)
     ax.axvline(len(SYSTEMS[0][1]), color="0.40", lw=0.72, zorder=5)
 
-    # Dedicated row-header columns: Cause is merged by six-row blocks and
-    # Effect is listed once per row, so the direction is explicit without arrows.
+    # Separate cause and effect headers make direction explicit. / 原因与结果分列，使方向无需箭头也清晰。
     axh.set_xlim(0, 2)
     axh.set_ylim(ny, 0)
     axh.set_xticks([0.5, 1.5])

@@ -1,25 +1,14 @@
-"""湖间 CCM 90 条边——带断点续跑，与湖内同一套规范。
+"""Official Modal stage for 90 directed between-lake CCM edges.
+正式的 Modal 湖间 CCM 阶段，共 90 条有向边。
 
-三个要点
---------
-1. **显著性判定与湖内共用同一个函数**（`apply_fdr_and_causal_evidence`），因此
-   时序保留规则一致：d>0 保留、d=0 标注 unresolved、d<0 不作因果证据。
-2. **断点续跑**：每条边算完立刻写入 Volume 分片，中断只损失在途的边。
-3. **用 spawn_map 而不是 `.map()`**：后者阻塞等待且默认 return_exceptions=False，
-   任一输入永久失败就会抛异常、本地入口崩溃，Modal 随即取消其余全部在途任务。
+The shared CCM algorithms come from ``01_analysis_core/analysis_core.py``.
+This stage defines the experiment edges, stores one resumable shard per edge,
+rejects incomplete shard sets and builds the connectivity summaries.
+共享 CCM 算法来自 ``01_analysis_core/analysis_core.py``。本阶段定义实验边、
+按边保存可续跑分片、拒绝不完整分片集合，并生成连通性汇总。
 
-湖间的混杂控制由「有水道连接 vs 无水道连接」的分组对照承担，不用 PCMCI。
-
-跑法
-----
-    modal run --detach code/03_inter_lake_ccm/run_inter_lake_ccm.py     # 跑（自动续）
-    modal run code/03_inter_lake_ccm/run_inter_lake_ccm.py --merge-only # 仅合并
-    modal run code/03_inter_lake_ccm/run_inter_lake_ccm.py --status     # 只看进度
-
-输出
-----
-    lake_results/final_v3/inter_edges/<cause>__<effect>.json
-    lake_results/final_v3/connectivity_full_pairwise_ccm_results.csv
+Commands and expected outputs are listed in the repository README.
+运行命令与预期输出见仓库 README。
 """
 
 from __future__ import annotations
@@ -33,7 +22,7 @@ from pathlib import Path
 import modal
 
 _CODE_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_CODE_DIR / "01_shared"))
+sys.path.insert(0, str(_CODE_DIR / "01_analysis_core"))
 sys.path.insert(0, str(_CODE_DIR))
 
 app = modal.App("inter-lake-ccm-v3")
@@ -42,7 +31,7 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("pandas==2.2.2", "numpy==1.26.4", "scipy", "statsmodels",
                  "networkx", "pyEDM==2.4.0")
-    .add_local_python_source("ccm_forecast_core")
+    .add_local_python_source("analysis_core")
     .add_local_python_source("config")
 )
 
@@ -59,7 +48,7 @@ LAKES = [
     "Kiskitto_Lake", "Sipiwesk_Lake", "Split_Lake",
 ]
 
-# 7 对具有直接水道连接（均在同一系统内）
+# Seven directly connected pairs within the study systems. / 研究水系内的 7 对直接连接湖泊。
 WATERWAY_CONNECTED_PAIRS = {
     frozenset({"Kalamalka_Lake", "Okanagan_Lake"}),
     frozenset({"Okanagan_Lake", "Skaha_Lake"}),
@@ -72,13 +61,15 @@ WATERWAY_CONNECTED_PAIRS = {
 
 
 def _edge_path(cause, effect):
+    """Return one edge-shard path. / 返回单条边的分片路径。"""
     return f"{EDGE_DIR}/{cause}__{effect}.json"
 
 
 @app.function(image=image, volumes={DATA_ROOT: volume}, cpu=1.0, memory=2048,
               timeout=3 * 3600, retries=3)
 def run_one_edge(cause_lake: str, effect_lake: str, n_surrogates: int) -> str:
-    import ccm_forecast_core as p
+    """Compute and persist one between-lake edge. / 计算并保存一条湖间边。"""
+    import analysis_core as p
 
     p.PKL_DIR = PKL_DIR_REMOTE
     p.OUT_DIR = OUT_DIR
@@ -89,9 +80,7 @@ def run_one_edge(cause_lake: str, effect_lake: str, n_surrogates: int) -> str:
     if os.path.exists(out_path):
         return out_path
 
-    # 面板构建也要包在 try 内：它若抛错，本函数会向上抛出 → retries 耗尽后
-    # 该边**不产生任何分片**，而合并阶段的齐全性校验只能报"缺失"、看不到原因。
-    # 统一捕获后写出带 status=ERROR 的分片，失败原因随分片留痕。
+    # Persist failures as shards so their causes survive merging. / 将失败写入分片，保留错误原因。
     try:
         panel, _embed_cause, embed_effect = p.load_pair_panel_for_connectivity(
             cause_lake, effect_lake)
@@ -100,7 +89,7 @@ def run_one_edge(cause_lake: str, effect_lake: str, n_surrogates: int) -> str:
                                   n_surrogates=n_surrogates)
     except Exception as exc:
         row = {"status": f"ERROR: {type(exc).__name__}: {exc}"}
-    # test_one_ccm_edge 用 cause/effect 记录列名，此处同时留下湖泊名字段
+    # Preserve lake names beside generic cause/effect fields. / 在通用原因与结果字段外保留湖泊名。
     row["cause_lake"] = cause_lake
     row["effect_lake"] = effect_lake
 
@@ -114,6 +103,7 @@ def run_one_edge(cause_lake: str, effect_lake: str, n_surrogates: int) -> str:
 
 @app.function(image=image, volumes={DATA_ROOT: volume}, timeout=1800)
 def list_done() -> list:
+    """List completed shard files. / 列出已完成分片。"""
     if not os.path.isdir(EDGE_DIR):
         return []
     return sorted(os.listdir(EDGE_DIR))
@@ -121,18 +111,16 @@ def list_done() -> list:
 
 @app.function(image=image, volumes={DATA_ROOT: volume}, timeout=1800)
 def merge_edges() -> dict:
-    """合并分片 → BH-FDR → 时序保留规则 → 分组对照汇总。"""
+    """Merge complete shards, apply FDR and build connectivity summaries.
+    合并完整分片、应用 FDR 并生成连通性汇总。"""
     import numpy as np
     import pandas as pd
     from scipy import stats
-    import ccm_forecast_core as p
+    import analysis_core as p
 
     p.OUT_DIR = OUT_DIR
 
-    # 先校验分片齐全再合并。BH-FDR 的检验族大小 = 参与校正的行数：
-    # 分片缺失时门槛会被算松（如 50 条边按 50 个检验校正而非 90），
-    # 产出一份看似正常、实则 FDR 基数错误的结果表且无任何警告。
-    # 检验族必须按研究问题预先划定，不能因运行未完成而缩小。
+    # Reject incomplete families before BH-FDR. / BH-FDR 前拒绝不完整检验族。
     expected = {f"{a}__{b}.json" for a, b in itertools.permutations(LAKES, 2)}
     present = {n for n in os.listdir(EDGE_DIR) if n.endswith(".json")}
     missing = sorted(expected - present)
@@ -156,7 +144,7 @@ def merge_edges() -> dict:
         df["convergence_diagnostic_pass"] = (
             df["convergence_diagnostic_pass"].astype(str).str.lower() == "true")
 
-    # 与湖内使用同一函数：FDR 在预先设定的候选边集合内施加，随后叠加时序保留规则
+    # Reuse the within-lake FDR and temporal rule. / 复用湖内 FDR 与时序规则。
     df = p.apply_fdr_and_causal_evidence(df)
     df["waterway_connected"] = [
         frozenset({r.cause_lake, r.effect_lake}) in WATERWAY_CONNECTED_PAIRS
@@ -165,15 +153,11 @@ def merge_edges() -> dict:
     out = f"{OUT_DIR}/connectivity_full_pairwise_ccm_results.csv"
     df.to_csv(out, index=False)
 
-    # 分组对照：主口径为湖泊对（两方向取均值），有向边并列作参考。
-    # 同一湖泊对的两个方向不独立，按有向边检验会高估有效样本量。
+    # Use lake pairs as the primary unit because opposite directions are dependent. / 主比较使用湖泊对，避免将相反方向视为独立样本。
     df["abs_rho"] = df["obs_rho"].abs()
     df["pair"] = ["|".join(sorted([r.cause_lake, r.effect_lake])) for r in df.itertuples()]
     summ = []
-    # 聚合口径说明：强度取两方向**均值**，显著性取**任一方向显著**（any）。
-    # 两者不同调是有意的——强度检验关心的是该湖泊对整体的关联水平，
-    # 而"这对湖泊之间是否检出因果联系"只要任一方向成立即可。
-    # 代价：pair 层面的 frac_sig 会高于 edge 层面，报告时需注明口径。
+    # Pair strength is the directional mean; support requires either direction. / 湖泊对强度取双向均值，任一方向成立即视为支持。
     pair_df = df.groupby("pair").agg(
         abs_rho=("abs_rho", "mean"),
         waterway_connected=("waterway_connected", "first"),
@@ -203,6 +187,8 @@ def merge_edges() -> dict:
 
 @app.local_entrypoint()
 def main(n_surrogates: int = 500, merge_only: bool = False, status: bool = False):
+    """Submit missing edges, report status or merge complete shards.
+    提交缺失边、查看进度或合并完整分片。"""
     pairs = list(itertools.combinations(LAKES, 2))
     tasks = [(a, b) for a, b in pairs] + [(b, a) for a, b in pairs]
     done = set(list_done.remote())
@@ -219,7 +205,7 @@ def main(n_surrogates: int = 500, merge_only: bool = False, status: bool = False
         print("已提交，任务在服务端独立运行。查看进度：")
         print("  modal volume ls ccm-data lake_results/final_v3/inter_edges | grep -c json")
         print("完成后合并：")
-        print("  modal run code/03_inter_lake_ccm/run_inter_lake_ccm.py --merge-only")
+        print("  modal run code/03_inter_lake_ccm/modal_inter_lake_ccm.py --merge-only")
         return
 
     r = merge_edges.remote()

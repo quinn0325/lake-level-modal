@@ -1,5 +1,8 @@
 """Figure 4.4 — 逐湖预测表现小多图（RQ3）。
 
+Local rendering from downloaded results; this script does not rerun forecasting.
+仅在本地读取已下载结果并绘图；本脚本不重新运行预测分析。
+
 热图把 108 个数字铺开，逐格可查但看不出每个湖自己的走势；本版改用 small
 multiples：每个湖一格，横轴为预见期，纵轴为该策略相对 AR-only（SARIMA(X) 面板
 为相对 SARIMA）的 RMSE 比值。基线因此收缩成一条 y = 1 的参考线，四条策略线
@@ -57,8 +60,7 @@ SAR = ("SARIMA",
 
 FS_TICK, FS_LAB, FS_TITLE, FS_PANEL, FS_LEG = 8.0, 9.7, 10.1, 8.7, 8.8
 YLIM = (0.28, 2.55)
-# 四条策略线在多个湖上几乎重合（Sipiwesk、Split），沿横轴各让开一点，
-# 使同一预见期上的四个点分开；线因此略带斜度，但可分辨性远优于完全叠合。
+# Offset overlapping strategies slightly along the x-axis. / 沿横轴轻微错开重叠策略。
 DODGE = 0.092
 
 mpl.rcParams.update({
@@ -136,7 +138,7 @@ def main():
     order_x = [k for k in XGB_ORDER if k in lx]
     order_s = [k for k in SAR_ORDER if k in ls]
 
-    # (a) 与 (b) 用两个 gridspec，中间留白供 (b) 的标题落位
+    # Separate grids leave room for panel headings. / 独立网格为面板标题留出空间。
     fig = plt.figure(figsize=(6.3, 8.4))
     gs_a = fig.add_gridspec(3, 3, hspace=0.30, wspace=0.09,
                             left=0.098, right=0.990, top=0.925, bottom=0.312)
@@ -177,7 +179,7 @@ def main():
         print(f"wrote {path}")
     plt.close(fig)
 
-    # ------------------------------------------------------------- 核对数字
+    # Numerical checks / 数值核对
     print("\npanel order (a):", ", ".join(LABEL[k] for k in order_x))
     print("panel order (b):", ", ".join(LABEL[k] for k in order_s))
     print("\nratio range (a): %.2f – %.2f" % (rx.values.min(), rx.values.max()))

@@ -1,5 +1,8 @@
 """生成全部附录表（附录A/B/C），输出 CSV（完整精度）与 Markdown（排版用）。
 
+Local table rendering only; this script does not rerun CCM or forecasting.
+仅在本地生成表格；本脚本不重新运行 CCM 或预测分析。
+
 分类与正文的方法学结构对应：
     附录A  数据与数据可用性        ← §3.1–3.2、§4.1
     附录B  CCM 分析                ← §3.3、§4.2–4.3
@@ -25,12 +28,12 @@ import numpy as np
 import pandas as pd
 
 CODE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(CODE / "01_shared"))
-import ccm_forecast_core as p                                   # noqa: E402
+sys.path.insert(0, str(CODE / "01_analysis_core"))
+import analysis_core as p                                       # noqa: E402
 
 p.log = lambda msg: None
 
-ROOT = CODE.parent                       # 仓库根
+ROOT = CODE.parent                       # Repository root / 仓库根目录
 TAB = ROOT / "ch4_tables"
 OUT = ROOT / "appendices"
 PKL = Path(p.PKL_DIR)
@@ -45,7 +48,7 @@ SYSTEM_OF = {lk: n for n, g in SYSTEMS for lk in g}
 LABEL = {lk: lk.replace("_Lake", "").replace("_", " ") for lk in LAKES}
 LABEL["Lake_of_the_Woods"] = "Lake of the Woods"
 
-# 取自 modal_build_lake_panels.py 的 REGULATION_STATIONS / REGULATION_SUBPERIODS
+# Regulation metadata matches the Modal panel stage. / 调控信息与 Modal 面板阶段一致。
 REGFLOW_STATIONS = {
     "Kalamalka_Lake": ["08NM065"], "Okanagan_Lake": ["08NM050"],
     "Skaha_Lake": ["08NM002"], "Vaseux_Lake": ["08NM247"],
@@ -65,7 +68,7 @@ REGFLOW_NOTE = {
 VAR_ORDER = ["RegFlow", "R", "P", "Evap", "SWE", "T", "WL"]
 
 
-# 少数列需要不同的小数位，按列名指定
+# Column-specific decimal places. / 按列指定小数位。
 COL_DECIMALS = {"coverage_pct": 1, "cv_rmse_m": 5, "learning_rate": 2, "cv_rmse_m": 5, "learning_rate": 2, "p_value": 4, "p_fdr": 4, "kendall_p": 4,
                 "dm_stat": 3, "S_ij": 3}
 
@@ -126,7 +129,7 @@ def longest_gap(s):
     return mx
 
 
-# ------------------------------------------------------------------ 附录A
+# Appendix A / 附录 A
 def appendix_a():
     print("附录A 数据与数据可用性")
     rows_a1, rows_a2, rows_a3 = [], [], []
@@ -174,12 +177,12 @@ def appendix_a():
           "标记点置为缺失，原值不作修正。")
 
 
-# ------------------------------------------------------------------ 附录B
+# Appendix B / 附录 B
 def appendix_b():
     print("附录B CCM 分析")
     import json
     emb = json.load(open(ROOT / "results" / "embed_params_corrected.json"))
-    # 矩阵版：τ 全湖全变量恒为 1，写进表注，表内只放 E
+    # tau is fixed at 1, so the matrix shows E only. / tau 恒为 1，矩阵仅展示 E。
     m = pd.DataFrame({v: {LABEL[lk]: emb.get(lk, {}).get(v, {}).get("E")
                           for lk in LAKES} for v in VAR_ORDER})
     m = m.reindex([LABEL[lk] for lk in LAKES]).reset_index(names="lake")
@@ -219,7 +222,7 @@ def appendix_b():
 
 
 
-# ------------------------------------------------------------------ 附录C
+# Appendix C / 附录 C
 def appendix_c():
     print("附录C 预测分析")
     s = pd.read_csv(ROOT / "results" / "forecast_synchrony_filtered_selected_lags.csv")
@@ -265,10 +268,7 @@ def appendix_c():
           "拟合时测试期外生变量缺口超过 6 个月（共 29 个组合）。"
           "13 种配置 × 10 湖中 122 个进入拟合、93 个产出有效滚动预测。")
 
-    # 由 tune_xgboost_hyperparams() 复算（2026-09-05，pandas 2.2.2 / numpy
-    # 1.26.4 / xgboost 3.4.1 的锁定环境，与 pandas 3.0.3 环境结果一致）。原始
-    # 运行仅把该结果打印到 Modal 日志、未落盘；调优过程无随机性（random_state
-    # = 0、折分固定），按同一代码与同一份 lake_pkls 重跑即可复现。
+    # Fixed global XGBoost parameters from training-only tuning. / 仅用训练期调优得到的固定全局 XGBoost 参数。
     grid = pd.DataFrame([
         {"max_depth": 2, "learning_rate": 0.05, "n_estimators": 200,
          "cv_rmse_m": 0.15547, "selected": True},
@@ -309,7 +309,7 @@ def appendix_c():
           "", float_fmt=".0f")
 
 
-# 合并成单一 Markdown，供直接贴入 Word
+# Combined Markdown output for document assembly. / 合并 Markdown 供文档排版。
 SECTIONS = [
     ("附录A　数据与数据可用性",
      ["A1_lakes_and_stations", "A2_data_availability",

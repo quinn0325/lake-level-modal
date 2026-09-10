@@ -1,45 +1,11 @@
-"""图 3.1 研究区域图：加拿大定位图 + 两个水系的放大面板。
+"""Render Figure 3.1 locally from committed map layers and study metadata.
+在本地根据已提交地图图层与研究元数据生成图 3.1。
 
-设计说明
---------
-两个水系相距约 2000 km（BC 与 Manitoba/Ontario），画在同一比例尺的单幅地图上，
-两簇湖泊各只占几个像素。因此采用「定位图 + 分区放大」的四面板布局，这是多站点
-分散的水文研究的常规做法：
-
-    (a) 加拿大定位图，标出三个研究区的范围框
-    (b) Okanagan 链（4 湖）
-    (c) Rainy Lake 与 Lake of the Woods
-    (d) Nelson 河链（4 湖）
-
-Nelson–Winnipeg 系统内部也要拆开：Rainy/Lake of the Woods 位于北纬 49°，
-Nelson 河链位于 54–56°，相距约 700 km，合画一个面板会重蹈"两头都看不清"的覆辙。
-
-湖泊用 HydroLAKES 的真实多边形绘制，而非点标记——Okanagan 四湖的串联形态本身
-就传达了水系结构。投影统一用 EPSG:3347（Canada Atlas Lambert）；不要用等经纬
-（PlateCarree），在北纬 50–56° 上经度方向会被拉伸约 40%，湖形明显变扁。
-
-水位站与调控站用不同符号区分。这一区分不是装饰：Lake of the Woods 由 4 个水位站
-监测（故需多站合成，见 §3.2.2），Playgreen 与 Kiskitto 共用同一调控站（Jenpeg
-大坝 05UB009），Sipiwesk 自身无坝、其调控站位于下游（Kelsey 发电站 05UE005）。
-这些在图上一眼可见，正文因而不必逐条罗列。
-
-依赖
-----
-    geopandas, shapely, matplotlib, pyogrio    （不需要 cartopy）
-
-外部数据（路径见下方常量，需按本机情况调整）
-    HydroLAKES_polys_v10.shp                   湖泊多边形
-    ne_50m_admin_0_countries.geojson           国界（Natural Earth）
-    ne_50m_admin_1_states_provinces_lines.geojson  省界（可选）
-
-跑法
-----
-    python code/06_figures/figure_3_1_study_area.py
-
-输出
-----
-    results/figures/figure_3_1_study_area.pdf   （矢量，投稿用）
-    results/figures/figure_3_1_study_area.png   （300 dpi，预览用）
+The committed cache is sufficient for normal reproduction. Set
+``CCM_HYDROLAKES_SHP`` only to rebuild the ten-lake polygon cache from the full
+HydroLAKES source. This script does not run CCM or forecasting.
+正常复现只需仓库内缓存；仅在用完整 HydroLAKES 重建十湖多边形缓存时设置
+``CCM_HYDROLAKES_SHP``。本脚本不运行 CCM 或预测分析。
 """
 
 from __future__ import annotations
@@ -58,25 +24,10 @@ from matplotlib.patches import Rectangle
 from shapely.geometry import Point, box
 from shapely.ops import nearest_points
 
-# --------------------------------------------------------------------------
-# 路径与常量
-# --------------------------------------------------------------------------
-# 这张图需要两份本地下载的地理数据，体积过大不随仓库分发（HydroLAKES 约 1 GB）。
-# 用环境变量指向你自己的下载位置：
-#
-#   HydroLAKES v1.0 多边形     https://www.hydrosheds.org/products/hydrolakes
-#     export CCM_HYDROLAKES_SHP=/path/to/HydroLAKES_polys_v10.shp
-#
-#   Natural Earth 1:50m 国界与省界已裁好随仓库分发，无需下载；如要用完整版：
-#     https://www.naturalearthdata.com/downloads/50m-cultural-vectors/
-#     export CCM_NATURALEARTH_DIR=/path/to/dir/holding/the/two/geojson
-#
-# 首次运行会把这十个湖裁切出来缓存到 results/figures/_cache_study_lakes.gpkg，
-# 之后重画就不再需要原始文件。仓库里已带该缓存，因此只有想从头重建时才需要它们。
+# Paths and map layers / 路径与地图图层
 HYDROLAKES = Path(os.environ.get(
     "CCM_HYDROLAKES_SHP", "HydroLAKES_polys_v10.shp"))
-# Natural Earth 的两层已裁到北美范围随仓库分发（合计约 670 KB），
-# 因此默认不需要任何下载；设了环境变量就用你自己的完整版本。
+# Use bundled Natural Earth layers unless an override is supplied. / 默认使用仓库内 Natural Earth 图层，可由环境变量替换。
 ROOT = Path(__file__).resolve().parents[2]
 _NE_BUNDLED = ROOT / "figures"
 if not _NE_BUNDLED.exists():
@@ -86,17 +37,17 @@ NE_COUNTRIES = NE_DIR / "ne_50m_admin_0_countries.geojson"
 NE_PROVINCES = NE_DIR / "ne_50m_admin_1_states_provinces_lines.geojson"
 
 OUT_DIR = ROOT / "results" / "figures"
-# 裁切好的十个湖泊多边形随仓库分发，因此没有 HydroLAKES 原始文件也能重画此图。
+# The committed ten-lake cache avoids requiring the full HydroLAKES file. / 已提交十湖缓存，无需完整 HydroLAKES 文件即可重画。
 CACHE = ROOT / "figures" / "_cache_study_lakes.gpkg"
 if not CACHE.exists():
     CACHE = ROOT / "reference" / "figures" / "_cache_study_lakes.gpkg"
-if not CACHE.exists():                            # 没有就退回到旧位置并现场生成
+if not CACHE.exists():                            # Rebuild only when no cache exists. / 无缓存时才重建。
     CACHE = OUT_DIR / "_cache_study_lakes.gpkg"
 
 CRS = 3347          # Canada Atlas Lambert
-FIG_WIDTH_CM = 16.0  # 论文正文宽
+FIG_WIDTH_CM = 16.0  # Dissertation text width / 论文正文宽度
 
-# 湖泊：名称 → (HydroLAKES id, 面板, 图上标签)
+# Lake name -> HydroLAKES id, panel and label. / 湖名 → HydroLAKES ID、面板与标签。
 LAKES = {
     "Kalamalka_Lake":    (7878,   "okanagan", "Kalamalka"),
     "Okanagan_Lake":     (695,    "okanagan", "Okanagan"),
@@ -127,10 +78,7 @@ REG_STATIONS = {
     "Playgreen_Lake": ["05UB009"], "Kiskitto_Lake": ["05UB009"],
     "Sipiwesk_Lake": ["05UE005"], "Split_Lake": ["05UF006"],
 }
-# 与 00_data_generation/modal_build_lake_panels.py 的 REGULATION_STATIONS 保持一致。
-# 曾把 Split_Lake 误写为 05UF003——那是该湖的**水位站**，调控站是下游的
-# Kettle 发电站 05UF006，抄错会使调控站三角形叠到水位站圆点上、看起来少一个。
-# 下面在导入时校验一次，不一致即报错。
+# Keep regulation gauges consistent with the Modal data stage. / 调控流量站须与 Modal 数据阶段保持一致。
 def _verify_reg_stations():
     import re
     src = (Path(__file__).resolve().parents[1] /
@@ -159,8 +107,7 @@ STATION_COORDS = {
     "08NM243": (-119.52551, 49.27319), "08NM247": (-119.52803, 49.25684),
 }
 
-# 7 对直接水道连接（与 03_inter_lake_ccm/run_inter_lake_ccm.py 一致）；
-# 箭头按水流方向绘制，上游 → 下游。
+# Seven direct connections, drawn upstream to downstream. / 7 对直接连接，箭头由上游指向下游。
 FLOW = [
     ("Kalamalka_Lake", "Okanagan_Lake"),
     ("Okanagan_Lake", "Skaha_Lake"),
@@ -171,7 +118,7 @@ FLOW = [
     ("Sipiwesk_Lake", "Split_Lake"),
 ]
 
-# 逐湖标注偏移（面板宽/高的比例），用于避开彼此与比例尺
+# Per-lake label offsets avoid overlaps. / 逐湖标签偏移用于避免重叠。
 LABEL_OFFSETS = {
     "Kalamalka_Lake":    (-0.17, 0.03),
     "Okanagan_Lake":     (-0.16, 0.00),
@@ -185,17 +132,18 @@ LABEL_OFFSETS = {
     "Split_Lake":        (0.00, 0.07),
 }
 
-C_LAKE = "#A8C6DC"       # 湖体填充
+C_LAKE = "#A8C6DC"       # Study-lake fill / 研究湖泊填充色
 C_LAKE_EDGE = "#4A7C99"
 C_LAND = "#F2F0EA"
-C_OTHER_LAKE = "#DCE7EF"  # 非研究湖泊
+C_OTHER_LAKE = "#DCE7EF"  # Context-lake fill / 背景湖泊填充色
 C_WL = "#1F1F1F"
 C_REG = "#C1452B"
 C_FLOW = "#4A7C99"
 
 
 def load_lakes() -> gpd.GeoDataFrame:
-    """读取 10 个研究湖泊的多边形；首次读 1 GB 源文件后缓存。"""
+    """Load the ten study polygons, rebuilding the cache only if absent.
+    读取十个研究湖泊多边形，仅在缓存缺失时重建。"""
     if CACHE.exists():
         return gpd.read_file(CACHE)
     ids = ",".join(str(v[0]) for v in LAKES.values())
@@ -212,11 +160,8 @@ CONTEXT_CACHE = CACHE.parent / "_cache_context_lakes.gpkg"
 
 
 def load_context_lakes(bounds_wgs84) -> gpd.GeoDataFrame:
-    """面板范围内其余较大湖泊，作为浅色背景，避免研究湖泊像孤岛。
-
-    与研究湖泊同理：结果随仓库分发，没有 HydroLAKES 原始文件也能画。
-    缓存里存的是三个面板范围的并集，这里按当前范围再裁一次。
-    """
+    """Load cached context lakes inside one panel extent.
+    读取单个面板范围内的缓存背景湖泊。"""
     minx, miny, maxx, maxy = bounds_wgs84
     if CONTEXT_CACHE.exists():
         g = gpd.read_file(CONTEXT_CACHE, bbox=(minx, miny, maxx, maxy))
@@ -227,6 +172,7 @@ def load_context_lakes(bounds_wgs84) -> gpd.GeoDataFrame:
 
 
 def station_gdf(mapping, panel) -> gpd.GeoDataFrame:
+    """Build one panel's station layer. / 构建单个面板的测站图层。"""
     rows = []
     for lake, sids in mapping.items():
         if LAKES[lake][1] != panel:
@@ -235,12 +181,12 @@ def station_gdf(mapping, panel) -> gpd.GeoDataFrame:
             lon, lat = STATION_COORDS[sid]
             rows.append({"sid": sid, "lake": lake, "geometry": Point(lon, lat)})
     g = gpd.GeoDataFrame(rows, crs=4326).to_crs(CRS)
-    # 同一站点服务多个湖泊时（如 Jenpeg 大坝）只画一次
+    # Draw shared stations once. / 共用测站仅绘制一次。
     return g.drop_duplicates(subset="sid")
 
 
 def add_scalebar(ax, length_km, label=None, pad=0.055, side="left"):
-    """比例尺。投影单位为米，故直接按米作图。side 用于避开该面板的标注。"""
+    """Draw a scale bar in projected metres. / 按投影坐标的米制单位绘制比例尺。"""
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     w, h = x1 - x0, y1 - y0
@@ -256,6 +202,7 @@ def add_scalebar(ax, length_km, label=None, pad=0.055, side="left"):
 
 
 def add_north_arrow(ax):
+    """Draw a north arrow. / 绘制指北针。"""
     x0, x1 = ax.get_xlim()
     y0, y1 = ax.get_ylim()
     x = x1 - 0.075 * (x1 - x0)
@@ -269,11 +216,9 @@ def add_north_arrow(ax):
 
 def draw_panel(ax, lakes_gdf, panel, title, pad_frac=0.14, scale_km=25,
                label_offsets=None, scale_side="left"):
+    """Draw one detailed study-area panel. / 绘制单个研究区放大面板。"""
     sub = lakes_gdf[lakes_gdf["lake"].map(lambda n: LAKES[n][1]) == panel]
-    # 面板范围要同时容纳湖体与调控站。Sipiwesk 与 Split 自身出口无坝，其调节
-    # 流量取自下游的发电站（Kelsey 05UE005、Kettle 05UF006），后者距 Split
-    # 约 90 km；只按湖体算边界会把它挤出画面，恰好漏掉 §3.2.1 所说
-    # 「调节流量对该湖自身出流的代表程度不一」最需要看到的一例。
+    # Include downstream regulation gauges in the panel extent. / 面板范围同时包含下游调控流量站。
     st = station_gdf(REG_STATIONS, panel)
     bounds = gpd.GeoSeries(list(sub.geometry) + list(st.geometry),
                            crs=CRS).total_bounds
@@ -282,7 +227,7 @@ def draw_panel(ax, lakes_gdf, panel, title, pad_frac=0.14, scale_km=25,
     pad = max(px, py)
     ext = (minx - pad, miny - pad, maxx + pad, maxy + pad)
 
-    # 背景：陆地、其余湖泊
+    # Land and context lakes / 陆地与背景湖泊
     ext_wgs = (gpd.GeoSeries([box(*ext)], crs=CRS).to_crs(4326)
                .total_bounds)
     ax.set_facecolor(C_LAND)
@@ -290,21 +235,16 @@ def draw_panel(ax, lakes_gdf, panel, title, pad_frac=0.14, scale_km=25,
         ctx = load_context_lakes(ext_wgs).to_crs(CRS)
         ctx[~ctx["Hylak_id"].isin([v[0] for v in LAKES.values()])].plot(
             ax=ax, facecolor=C_OTHER_LAKE, edgecolor="none", zorder=1)
-    except Exception as exc:            # 背景湖泊缺失不影响主图
+    except Exception as exc:            # Context lakes are optional. / 背景湖泊为可选图层。
         print(f"  [{panel}] 背景湖泊读取失败，跳过: {type(exc).__name__}")
 
-    # 边线必须细：Rainy 与 Lake of the Woods 的岸线极破碎，线宽 0.6 时
-    # 边线本身的面积超过湖体，整个湖会显示成深色块。
+    # Thin outlines preserve fragmented shorelines. / 细边线避免破碎岸线覆盖湖体。
     sub.plot(ax=ax, facecolor=C_LAKE, edgecolor=C_LAKE_EDGE, linewidth=0.22, zorder=2)
 
-    # 水流方向箭头：由上游湖泊质心指向下游湖泊质心
+    # Flow arrows / 水流方向箭头
     geom = {r["lake"]: r.geometry for _, r in sub.iterrows()}
     cent = {k: g.representative_point() for k, g in geom.items()}
-    # 箭头连接两个湖体的**最近点**而非质心：质心连线会斜穿陆地，
-    # 在 Okanagan 这种狭长串联湖上尤其失真。
-    # 串联紧邻的湖泊（Okanagan 链）最近点相距仅数百米，按原样绘制箭头长度
-    # 接近零、在面板尺度上不可见。低于最小长度时，沿两湖质心方向在最近点
-    # 中点处补足一段可见的箭头，方向仍由上游指向下游。
+    # Connect nearest shore points and enforce a visible minimum length. / 连接最近岸点，并设置最小可见长度。
     min_len = 0.055 * max(ext[2] - ext[0], ext[3] - ext[1])
     for up, dn in FLOW:
         if up in geom and dn in geom:
@@ -329,7 +269,7 @@ def draw_panel(ax, lakes_gdf, panel, title, pad_frac=0.14, scale_km=25,
                                          markersize=11, edgecolor="white",
                                          linewidth=0.4, zorder=6)
 
-    # 湖泊标注
+    # Lake labels / 湖泊标签
     offs = label_offsets or LABEL_OFFSETS
     for name, pt in cent.items():
         dx, dy = offs.get(name, (0.0, 0.03))
@@ -352,6 +292,7 @@ def draw_panel(ax, lakes_gdf, panel, title, pad_frac=0.14, scale_km=25,
 
 
 def draw_locator(ax, extents):
+    """Draw the Canadian locator map and study-area boxes. / 绘制加拿大定位图与研究区方框。"""
     countries = gpd.read_file(NE_COUNTRIES).to_crs(CRS)
     canada = countries[countries.get("ADMIN", countries.columns[0]).astype(str)
                        .str.contains("Canada", case=False, na=False)]
@@ -362,7 +303,7 @@ def draw_locator(ax, extents):
         gpd.read_file(NE_PROVINCES).to_crs(CRS).plot(
             ax=ax, color="#CFCFCF", linewidth=0.3, zorder=2)
 
-    # 方框设最小可见边长：Okanagan 链只有约 100 km，按真实范围画会小到看不见
+    # Enforce visible locator boxes for small regions. / 为较小研究区设置可见的定位框尺寸。
     MIN_SIDE = 4.2e5
     for tag, ext in extents.items():
         cx, cy = (ext[0] + ext[2]) / 2, (ext[1] + ext[3]) / 2
@@ -374,8 +315,7 @@ def draw_locator(ax, extents):
                     textcoords="offset points", ha="center", fontsize=7,
                     color=C_REG, fontweight="bold", zorder=6)
 
-    # 裁去高纬群岛与美国大部，让研究区在图中占更大比重。
-    # x 下界不能高于 Okanagan 链（EPSG:3347 下 x≈4.26e6），否则 (b) 框会被裁掉。
+    # Crop the locator while retaining every study-area box. / 裁切定位图，同时保留全部研究区方框。
     ax.set_xlim(3.85e6, 8.00e6)
     ax.set_ylim(0.90e6, 3.60e6)
     ax.set_xticks([]); ax.set_yticks([])

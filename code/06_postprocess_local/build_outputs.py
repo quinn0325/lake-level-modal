@@ -1,4 +1,5 @@
 """Build local tables, figures and dataset files from downloaded Modal outputs.
+根据已下载的 Modal 输出在本地生成表格、图形和数据集。
 
 This is the only local post-processing entry point. It assumes that Modal has
 already produced the analysis outputs and that they have been downloaded into
@@ -15,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CODE = ROOT / "code"
 
-for rel in ("", "01_shared"):
+for rel in ("", "01_analysis_core"):
     sys.path.insert(0, str(CODE / rel) if rel else str(CODE))
 
 

@@ -1,5 +1,8 @@
 """Figure 4.3 — 湖间因果结构与水文连通性（RQ2）。
 
+Local rendering from downloaded results; this script does not rerun CCM.
+仅在本地读取已下载结果并绘图；本脚本不重新运行 CCM。
+
 (a) 湖间关系网络：10 个湖按两个水系分区排布。
     浅灰粗线 = 7 条已知直接水道连接（先验的物理连通信息）；
     彩色箭头 = 22 条通过 BH-FDR（α = 0.05，检验族 = 90 条湖间候选边）
@@ -10,14 +13,14 @@
 
 (b) 湖泊对强度 S_ij 按水文距离分组的分布（箱线图 + 抖动散点）。
     S_ij 为该湖泊对两个方向 |ρ| 的均值，见
-    run_inter_lake_ccm.py 中 pair_df 的聚合口径。
+    modal_inter_lake_ccm.py 中 pair_df 的聚合口径。
     正文的正式推断只有「direct vs all other pairs」一项 Mann–Whitney
     检验（两侧，与代码 alternative="two-sided" 一致），四分组仅为描述性
     深化，图上以括注标明哪三组被合并进 "other pairs"。
 
 约定
 ----
-· d > 0 表示原因领先效应，与 ccm_forecast_core 一致。
+· d > 0 表示原因领先效应，与 analysis_core 一致。
 · 数据源 ch4_tables/T6_between_lake_edges.csv（90 条有向边）与
   T7_lake_pair_strength.csv（45 个湖泊对），均出自 2026-08-31 重跑。
 · tier 字段为第四章写作阶段引入的事后水文距离分组，分析代码中不存在，
@@ -53,7 +56,7 @@ POS = {"Kalamalka_Lake": (0.085, 0.86), "Okanagan_Lake": (0.255, 0.63),
        "Playgreen_Lake": (0.585, 0.58), "Kiskitto_Lake": (0.925, 0.55),
        "Sipiwesk_Lake": (0.665, 0.30), "Split_Lake": (0.915, 0.17)}
 
-# 标签位置：拥挤处改放到节点侧面，避免被箭头压住
+# Offset crowded labels from arrows. / 将拥挤标签移离箭头。
 LABEL_OFF = {"Kalamalka_Lake": (0.0, 0.052, "center", "bottom"),
              "Okanagan_Lake": (0.0, -0.055, "center", "top"),
              "Skaha_Lake": (0.0, -0.055, "center", "top"),
@@ -77,27 +80,21 @@ TIER_LABEL = {"1_direct": "Direct connection",
               "3_same_basin_diff_subsystem": "Same basin, other subsystem",
               "4_different_basin": "Different basin"}
 
-# 色标低端从 #D3E4F5 提到 #9CC3E0：实测 22 条 d>0 边的 ρ 最低 0.401，
-# 原低端太浅，最弱的几条在纸面上几乎看不见。
+# Colour and width scales preserve weak retained edges in print. / 色彩与线宽范围确保较弱保留边在印刷中可见。
 CMAP = LinearSegmentedColormap.from_list(
     "rho", ["#9CC3E0", "#6BAED6", "#3C8DC4", "#2171B5", "#08306B"])
-NORM = Normalize(vmin=0.15, vmax=1.0)          # 与 Figure 4.2 同一色标
-RHO_LO, RHO_HI = 0.35, 0.95                    # 线宽映射区间
+NORM = Normalize(vmin=0.15, vmax=1.0)          # Matches Figure 4.2 / 与图 4.2 一致
+RHO_LO, RHO_HI = 0.35, 0.95                    # Width mapping / 线宽映射范围
 
-# 视觉降噪：22 条 d>0 关系全部保留（"网络远比河网复杂"本身就是结果），
-# 但跨子系统与跨流域的长箭头减淡减细，避免第一眼被远距离交叉线占据。
-# (alpha, 线宽系数)
-# 仍保留由近及远的层次，但把最低透明度从 0.42 提到 0.72：原设置下跨流域
-# 的 5 条边在印刷稿上接近隐形，而"多数支持关系不在直接水道上"正是结论之一。
+# Long-distance edges are lighter but remain visible. / 远距离边较浅，但仍保持可见。
 TIER_EMPH = {"1_direct": (1.00, 1.00), "2_same_subsystem_indirect": (0.95, 0.92),
              "3_same_basin_diff_subsystem": (0.84, 0.84),
              "4_different_basin": (0.72, 0.76)}
-WATERWAY_GREY = "0.76"      # 物理水道必须始终清楚可见，不能淡到与浅蓝箭头混淆
+WATERWAY_GREY = "0.76"      # Distinguish waterways from CCM edges. / 区分物理水道与 CCM 边。
 
-# 字号按最终印刷尺寸设定：图宽即 A4（2.5 cm 页边距）正文栏宽，
-# 所以这里写的 pt 就是纸面上的 pt；插入文档时必须按 100% 置入。
+# Typography assumes full-width placement in the dissertation. / 字号按论文正文全宽排版设置。
 FS_TICK, FS_LAB, FS_TITLE, FS_NODE, FS_LEG = 10.0, 11.0, 12.0, 9.5, 10.0
-FS_ANN = 9.0                    # panel (b) 顶部的检验结果标注
+FS_ANN = 9.0                    # Panel (b) test annotation / 面板 (b) 检验标注
 LEFT, RIGHT = 0.235, 0.972
 
 mpl.rcParams.update({
@@ -130,20 +127,20 @@ def draw_network(ax, sup):
         ax.text((x0 + x1) / 2, 0.985, name, ha="center", va="center",
                 fontsize=FS_LEG + 0.2, color="0.35")
 
-    for a, b in WATERWAYS:                       # 已知水道：底层浅灰粗线
+    for a, b in WATERWAYS:                       # Known waterways beneath CCM edges. / 已知水道置于 CCM 边下层。
         (xa, ya), (xb, yb) = POS[a], POS[b]
         ax.plot([xa, xb], [ya, yb], color=WATERWAY_GREY, lw=6.0, zorder=1,
                 solid_capstyle="round")
 
     weak = sup[sup.obs_lag <= 0]
-    for r in weak.itertuples():                  # d<=0：淡虚线，不画箭头
+    for r in weak.itertuples():                  # d<=0 as dashed lines without arrows. / d<=0 使用无箭头虚线。
         (xa, ya), (xb, yb) = POS[r.cause_lake], POS[r.effect_lake]
         ax.add_patch(FancyArrowPatch((xa, ya), (xb, yb), arrowstyle="-",
                                      connectionstyle="arc3,rad=0.16",
                                      color="0.42", lw=1.3, ls=(0, (3.5, 2)),
                                      shrinkA=10, shrinkB=10, zorder=2))
 
-    # 远关系先画、近关系后画，保证同子系统的箭头压在长线之上
+    # Draw distant edges first. / 先绘制远距离边。
     pos = sup[sup.obs_lag > 0].copy()
     pos["ord_key"] = pos.tier.map({t: i for i, t in enumerate(TIERS[::-1])})
     for r in pos.sort_values(["ord_key", "obs_rho"]).itertuples():
@@ -220,7 +217,7 @@ def draw_strength(axb, t7):
     for sp in ("top", "right", "left"):
         axb.spines[sp].set_visible(False)
 
-    # 正文唯一的正式检验：direct 对其余三组合并；四分组本身只是描述性
+    # Formal test compares direct pairs with all others. / 正式检验比较直接连接湖泊对与其他湖泊对。
     axb.text(0.0, -0.34, "Pre-specified test, direct vs all other pairs:",
              fontsize=FS_ANN, ha="left", va="center", color="0.20")
     axb.text(0.0, 0.02, "Mann–Whitney $U$ = 201, $p$ = 0.032, AUC = 0.756",
@@ -247,7 +244,7 @@ def main():
             print(f"wrote {path}")
         plt.close(fig)
 
-    # 网络图单独成图：不再与箱线图共用版面，节点间距因此加大，边更易分辨
+    # Render the network separately for clearer spacing. / 网络图单独输出以增加节点间距。
     fig = plt.figure(figsize=(6.3, 6.4))
     gs = fig.add_gridspec(2, 1, height_ratios=[10.0, 1.9], hspace=0.0,
                           left=0.020, right=0.992, top=0.988, bottom=0.030)
@@ -260,7 +257,7 @@ def main():
     draw_strength(ax, t7)
     save(fig, "figure_4_3_pair_strength")
 
-    # ------------------------------------------------------------ 核对数字
+    # Numerical checks / 数值核对
     print(f"\nbetween-lake edges tested : {len(t6)}")
     print(f"  supported               : {len(sup)}")
     cls = sup.obs_lag.map(lambda d: "pos" if d > 0 else ("zero" if d == 0 else "neg"))

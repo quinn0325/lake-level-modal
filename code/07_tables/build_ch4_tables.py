@@ -1,5 +1,8 @@
 """从 results/ 派生第四章的中间表，写入 ch4_tables/。
 
+Local deterministic transformation only; this script does not rerun the Modal analyses.
+仅在本地进行确定性结果转换；本脚本不重新运行 Modal 分析。
+
 为什么需要这一步
 ----------------
 `06_figures/` 与 `07_tables/` 下的脚本读的是 `ch4_tables/T*.csv`，而不是
@@ -84,7 +87,7 @@ def tier_of(a, b):
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
 
-    # ---- T1 / T4：预测结果，只做列序统一 ----------------------------------
+    # T1/T4: reorder forecast columns only. / T1/T4：仅统一预测结果列顺序。
     roll = pd.read_csv(RESULTS / "forecast_synchrony_filtered_rolling_results.csv")
     roll = roll[["lake", "horizon_months", "method", "rmse", "mae", "nse",
                  "n_origins", "min_exog_lag", "requires_foresight"]]
@@ -93,15 +96,14 @@ def main():
     full = pd.read_csv(RESULTS / "forecast_synchrony_filtered_full_results.csv")
     full.to_csv(OUT / "T4_single_split_full.csv", index=False)
 
-    # ---- T3：DM 检验 + 显著标记 + 胜者 -------------------------------------
-    # dm_stat = mean(loss_1 - loss_2)/se，因此 dm_stat < 0 表示 method_1 损失更小。
+    # T3: DM results; a negative statistic favours method 1. / T3：DM 结果；负统计量表示方法 1 损失更小。
     dm = pd.read_csv(RESULTS / "forecast_synchrony_filtered_dm_results.csv")
     dm["sig_fdr"] = dm["p_fdr"] < config.FDR_ALPHA
     dm["winner"] = np.where(~dm["sig_fdr"], "",
                             np.where(dm["dm_stat"] < 0, dm["method_1"], dm["method_2"]))
     dm.to_csv(OUT / "T3_dm_bh.csv", index=False)
 
-    # ---- T5：湖内边 + 效应变量的嵌入参数 -----------------------------------
+    # T5: within-lake edges plus effect embeddings. / T5：湖内边及结果变量嵌入参数。
     emb = json.loads((RESULTS / "embed_params_corrected.json").read_text())
     w = pd.read_csv(RESULTS / "ccm_all_edges_merged_fdr.csv")
     w["E_effect"] = [emb.get(r.lake, {}).get(r.effect, {}).get("E") for r in w.itertuples()]
@@ -112,20 +114,18 @@ def main():
            "lag_resolution", "causal_evidence", "n_valid_surrogates"]]
     w.to_csv(OUT / "T5_within_lake_edges.csv", index=False)
 
-    # ---- T6：湖间边 + tier -------------------------------------------------
+    # T6: between-lake edges plus descriptive tier. / T6：湖间边及描述性层级。
     b = pd.read_csv(RESULTS / "connectivity_full_pairwise_ccm_results.csv")
     b["tier"] = [tier_of(r.cause_lake, r.effect_lake) for r in b.itertuples()]
     b.to_csv(OUT / "T6_between_lake_edges.csv", index=False)
 
-    # ---- T7：按湖泊对聚合 --------------------------------------------------
-    # S_ij 为一对湖两个方向 |rho| 的均值；只要有一个方向 FDR 显著、收敛
-    # 且最优滞后 d >= 0，该对即记为 detected。
+    # T7: pair strength is mean directional |rho|; either retained direction marks detection. / T7：湖泊对强度取双向 |rho| 均值，任一方向保留即记为检出。
     b["key"] = [tuple(sorted([r.cause_lake, r.effect_lake])) for r in b.itertuples()]
     b["ok"] = (b.statistically_significant & b.convergence_diagnostic_pass
                & (b.obs_lag >= 0))
     rows = []
     for (a, c), g in b.groupby("key"):
-        rows.append({"pair": f"{a}|{c}",          # 下游脚本自己做人读标签
+        rows.append({"pair": f"{a}|{c}",          # Downstream scripts format labels. / 下游脚本负责标签格式。
                      "S_ij": g.obs_rho.abs().mean(),
                      "detected": bool(g.ok.any()),
                      "tier": tier_of(a, c),

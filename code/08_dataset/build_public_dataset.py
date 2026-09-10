@@ -1,5 +1,8 @@
 """构建拟公开的月度数据集：十个受调控加拿大湖泊，1994-01 至 2024-12。
 
+Local dataset export from downloaded lake panels; this script does not rerun CCM or forecasting.
+仅在本地根据已下载湖泊面板导出数据集；本脚本不重新运行 CCM 或预测分析。
+
 产出三个层次，对应三种使用需求：
 
   raw_station     逐站原始水位（未做异常筛查、未合成），保留观测溯源
@@ -29,8 +32,8 @@ from pathlib import Path
 import pandas as pd
 
 CODE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(CODE / "01_shared"))
-import ccm_forecast_core as p                                    # noqa: E402
+sys.path.insert(0, str(CODE / "01_analysis_core"))
+import analysis_core as p                                        # noqa: E402
 
 p.log = lambda msg: None
 OUT = CODE.parent / "dataset"
@@ -114,7 +117,7 @@ def main():
 
     lm = stack(panels, "lake_monthly.csv")
 
-    # 去季节化：仅用训练期（前 n - 37 个月）的逐月气候态，与主流程一致
+    # Match the training-only deseasonalisation used by the analysis. / 与分析一致，仅用训练期去季节化。
     train_end = len(next(iter(panels.values()))) - p.FORECAST_HORIZON
     des = {lk: panel.apply(lambda c: p.deseasonalize(c, train_end=train_end))
            for lk, panel in panels.items()}

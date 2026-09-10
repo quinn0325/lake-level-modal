@@ -1,5 +1,8 @@
 """Figure 4.1 — 十个研究湖泊的水位变率。
 
+Local figure rendering only; this script does not run CCM or forecasting.
+仅在本地绘图；本脚本不运行 CCM 或预测分析。
+
 (a) 逐湖时间序列（10 条堆叠条带，1994–2024）
 (b) 逐湖横向箱线图
 
@@ -56,8 +59,8 @@ import numpy as np
 import pandas as pd
 
 CODE_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(CODE_DIR / "01_shared"))
-import ccm_forecast_core as p                                    # noqa: E402
+sys.path.insert(0, str(CODE_DIR / "01_analysis_core"))
+import analysis_core as p                                        # noqa: E402
 
 p.log = lambda msg: None
 
@@ -71,19 +74,17 @@ SYSTEMS = [
 ]
 LAKES = [lk for _, g in SYSTEMS for lk in g]
 SYSTEM_OF = {lk: n for n, g in SYSTEMS for lk in g}
-COLOUR = {"Okanagan": "#0072B2", "Nelson–Winnipeg": "#D55E00"}   # Okabe–Ito
+COLOUR = {"Okanagan": "#0072B2", "Nelson–Winnipeg": "#D55E00"}   # Okabe–Ito palette / Okabe–Ito 配色
 LABEL = {lk: lk.replace("_Lake", "").replace("_", " ") for lk in LAKES}
 LABEL["Lake_of_the_Woods"] = "Lake of the Woods"
 
-# 字号按最终印刷尺寸设定：图宽 6.3 in 即 A4（2.5 cm 页边距）的正文栏宽，
-# 所以这里写的 pt 就是纸面上的 pt；插入文档时必须按 100% 置入。
+# Typography assumes full-width placement in the dissertation. / 字号按论文正文全宽排版设置。
 FS_TICK, FS_LABEL, FS_LAKE, FS_TITLE = 10.0, 11.0, 10.5, 12.0
-BAND_GREY = "0.45"      # 缺测竖带颜色；透明度由 BAND_ALPHA 控制
+BAND_GREY = "0.45"      # Missing-period bands / 缺测时段色带
 BAND_ALPHA = 0.07
 FS_CAPTION = 9.0
 
-# 图内 caption。投稿时若期刊/handbook 要求 caption 写在正文，把 EMBED_CAPTION
-# 置 False 即可，版面会自动收回底部留白，图形本身不变。
+# Toggle the embedded caption without changing the plotted panels. / 可切换图内说明文字，不改变绘图面板。
 EMBED_CAPTION = False
 CAPTION = (
     "Figure 4.1. Temporal and distributional variability of observed monthly "
@@ -139,7 +140,7 @@ def main():
     x0, x1 = pd.Timestamp("1994-01-01"), pd.Timestamp("2025-01-01")
 
     cap_lines = (textwrap.wrap(CAPTION, width=104) if EMBED_CAPTION else [])
-    cap_in = len(cap_lines) * FS_CAPTION * 1.42 / 72.0        # caption 占用高度
+    cap_in = len(cap_lines) * FS_CAPTION * 1.42 / 72.0        # Caption height / 说明文字高度
     fig_h = 9.3 + cap_in
     bottom = (0.50 + cap_in + 0.10) / fig_h if EMBED_CAPTION else 0.50 / fig_h
 
@@ -149,7 +150,7 @@ def main():
                           bottom=bottom)
     gs_a = gs[0].subgridspec(10, 1, hspace=0.0)
 
-    # ---------------------------------------------------------------- panel (a)
+    # Panel (a): time series / 面板 (a)：时间序列
     for k, lake in enumerate(LAKES):
         ax = fig.add_subplot(gs_a[k])
         s, colour = data[lake], COLOUR[SYSTEM_OF[lake]]
@@ -176,7 +177,7 @@ def main():
             ax.set_title("(a)  Monthly water levels centred on each lake's "
                          "long-term mean", fontsize=FS_TITLE, loc="left", pad=6,
                          x=-0.245)
-        # 系统分隔：Okanagan 与 Nelson–Winnipeg 之间画一条细线
+        # Separate the two lake systems. / 分隔两个湖泊水系。
         if lake == "Rainy_Lake":
             ax.spines["top"].set_visible(True)
             ax.spines["top"].set_linewidth(1.1)
@@ -184,7 +185,7 @@ def main():
     fig.text(0.058, (pa_top + pa_bot) / 2, "Centred water level (m)",
              rotation=90, va="center", ha="center", fontsize=FS_LABEL)
 
-    # ---------------------------------------------------------------- panel (b)
+    # Panel (b): distributions / 面板 (b)：分布
     axb = fig.add_subplot(gs[1])
     order = LAKES[::-1]
     _mpl_ver = tuple(int(v) for v in mpl.__version__.split(".")[:2])
@@ -237,15 +238,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# 定稿 caption（与正文一致，勿在图内重复）
-# -----------------------------------------------------------------------------
-# Figure 4.1. Temporal and distributional variability of observed monthly lake
-# water levels before deseasonalisation. (a) Cleaned monthly water levels
-# centred on each lake's long-term mean. All series share the same vertical
-# scale, allowing differences in amplitude to be compared directly. Breaks
-# indicate missing observations, with grey shading identifying contiguous gaps
-# of at least two months. (b) Distributions of the corresponding centred
-# monthly water levels. Blue and orange denote lakes in the Okanagan and
-# Nelson–Winnipeg systems, respectively.

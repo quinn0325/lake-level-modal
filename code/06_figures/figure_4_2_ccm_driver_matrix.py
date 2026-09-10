@@ -1,5 +1,8 @@
 """Figure 4.2 — 湖内 CCM 因果筛查结果（RQ1）。
 
+Local rendering from downloaded results; this script does not rerun CCM.
+仅在本地读取已下载结果并绘图；本脚本不重新运行 CCM。
+
 driver → WL 结果矩阵（热图）：10 个湖 × 6 个候选驱动变量。
     仅同时通过 BH-FDR（α = 0.05，检验族 = 420 条湖内候选边）与收敛诊断的
     24 条关系着色，未通过筛选的格子留白。
@@ -13,12 +16,12 @@ Vaseux 关系最多而 Skaha 一条都没有，以及 4 例同月与 2 例逆序
 
 约定
 ----
-· d 的符号约定与 ccm_forecast_core 一致：d > 0 表示原因领先效应。
+· d 的符号约定与 analysis_core 一致：d > 0 表示原因领先效应。
   （相对 Ye et al. 2015 的 ℓ，本文 d = −ℓ。）
 · 数据源为 ch4_tables/T5_within_lake_edges.csv（420 条），出自
   2026-08-31 重跑结果。
 · statistically_significant 字段本身已包含收敛诊断，见
-  ccm_forecast_core.apply_fdr_and_causal_evidence，因此不必再取一次交集。
+  analysis_core.apply_fdr_and_causal_evidence，因此不必再取一次交集。
 
 输出
 ----
@@ -50,18 +53,16 @@ DRIVERS = ["RegFlow", "R", "P", "Evap", "SWE", "T"]
 DRIVER_LABEL = {"RegFlow": "Regulated flow", "R": "Runoff", "P": "Precipitation",
                 "Evap": "Evaporation", "SWE": "SWE", "T": "Temperature"}
 
-C_ZERO = "#B9785A"       # d = 0  同月，低饱和度橙色
-C_NEG = "#777777"        # d < 0  逆序
+C_ZERO = "#B9785A"       # Contemporaneous d=0 / 同期 d=0
+C_NEG = "#777777"        # Reverse timing d<0 / 逆序 d<0
 CMAP = LinearSegmentedColormap.from_list(
     "rho", ["#F4F8FB", "#C5DFED", "#84BBD8", "#347EAF", "#124B7A"])
-NORM = Normalize(vmin=0.0, vmax=1.0)     # ρ 使用完整理论范围 0–1
-TXT_FLIP = 0.62                          # 超过此 ρ 用白字
+NORM = Normalize(vmin=0.0, vmax=1.0)     # Full theoretical rho range / rho 的完整理论范围
+TXT_FLIP = 0.62                          # White-text threshold / 白色文字阈值
 
-# 字号按最终印刷尺寸设定：图宽即正文栏宽 6.3 in（A4，2.5 cm 页边距），
-# 因此这里写多少 pt，读者在纸上看到的就是多少 pt。插入文档时务必按 100%
-# 置入，一旦被缩放，下面所有字号都会等比变小。
+# Typography assumes full-width placement in the dissertation. / 字号按论文正文全宽排版设置。
 FS_TICK, FS_LAB, FS_TITLE, FS_IN, FS_LEG = 10.0, 11.0, 12.0, 9.5, 10.0
-FS_HEAD = 10.0                  # 列首：旋转 30° 以便在等分列宽下保持字号
+FS_HEAD = 10.0                  # Rotated column headers / 旋转列标题
 LEFT, RIGHT = 0.292, 0.900
 
 mpl.rcParams.update({
@@ -84,7 +85,7 @@ def lag_text(d):
 
 def draw_matrix(ax, sup):
     ny, nx = len(LAKES), len(DRIVERS)
-    for i in range(ny):                                   # 先铺满空格
+    for i in range(ny):                                   # Draw blank cells first. / 先绘制空白单元格。
         for j in range(nx):
             ax.add_patch(Rectangle((j - .5, i - .5), 1, 1, facecolor="white",
                                    edgecolor="0.86", lw=0.55, zorder=1))
@@ -127,7 +128,7 @@ def draw_key(axl):
     axl.set_axis_off()
     axl.set_xlim(0, 1)
     axl.set_ylim(0, 1)
-    # Two timing classes on one row, with the color scale tucked under them.
+    # Place timing classes above the colour scale. / 时序类别位于色标上方。
     for x, y, c, lab in ((0.015, 0.70, C_ZERO, "d = 0  contemporaneous"),
                          (0.515, 0.70, C_NEG, "d < 0  opposite temporal order")):
         axl.add_patch(Rectangle((x, y - 0.13), 0.026, 0.26,
@@ -165,7 +166,7 @@ def main():
     t5 = pd.read_csv(TAB_DIR / "T5_within_lake_edges.csv")
     sup = t5[(t5.effect == "WL") & t5.statistically_significant].copy()
 
-    # ------------------------------------------------------ 独立矩阵图
+    # Standalone matrix / 独立矩阵图
     fig = plt.figure(figsize=(6.3, 5.30))
     gs = fig.add_gridspec(2, 1, height_ratios=[10.0, 2.15], hspace=0.0,
                           left=LEFT, right=RIGHT, top=0.874, bottom=0.058)
@@ -173,7 +174,7 @@ def main():
     draw_key(fig.add_subplot(gs[1]))
     save(fig, "figure_4_2_ccm_driver_matrix")
 
-    # ------------------------------------------------------------ 核对数字
+    # Numerical checks / 数值核对
     print(f"\nwithin-lake edges tested   : {len(t5)}")
     print(f"  supported                : {int(t5.statistically_significant.sum())}")
     print(f"driver -> WL tested        : {int((t5.effect == 'WL').sum())}")
@@ -202,15 +203,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# 定稿 caption（图内不重复，正文排版时使用）
-# -----------------------------------------------------------------------------
-# Figure 4.2. CCM-supported driver-to-water-level relationships across the ten
-# study lakes. The 24 driver → WL relationships that pass Benjamini–Hochberg
-# FDR control at alpha = 0.05 within the 420-edge within-lake family together
-# with the convergence diagnostic. Cell shading gives the cross-map skill rho
-# and the cell label the optimal lag d in months, positive when the driver
-# leads water level; cell outlines mark the temporal class. Relationships that
-# do not pass are left blank, as is Temperature, for which no lake returned a
-# supported relationship.
