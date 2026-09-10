@@ -141,17 +141,8 @@ source_data/
 
 Monthly water-level and regulated-flow series are fetched directly by the
 Modal data-generation code from the Water Survey of Canada historical
-hydrometric data service. No manual WSC download is required for the official
-ten-lake route.
-
-HYDAT is used only for the optional candidate-lake screening step, not for the
-official ten-lake analysis. To reproduce that optional screening step, download
-the current SQLite release (`Hydat.sqlite3`) from the [National Water Data
-Archive: HYDAT](https://www.canada.ca/en/environment-climate-change/services/water-overview/quantity/monitoring/survey/data-products-services/national-archive-hydat.html)
-or from the Water Survey of Canada tools/downloads page. HYDAT is updated over
-time, so record the download date; a later release may produce a slightly
-different screening table. The selected ten-lake set used by the dissertation
-analysis is fixed in this repository.
+hydrometric data service. No manual WSC download or local HYDAT database is
+required for the official ten-lake route.
 
 ERA5-Land is not downloaded manually. The Modal data-generation job retrieves
 the [ERA5-Land monthly averaged dataset](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means)
@@ -162,6 +153,17 @@ instructions](https://cds.climate.copernicus.eu/how-to-api).
 In short, a full rerun requires manual preparation of only the two HydroSHEDS
 ZIP files above plus a valid CDS API credential. WSC and ERA5-Land time series
 are downloaded by the Modal jobs.
+
+## Fixed Study Sample
+
+The ten study lakes and their water-level and regulated-flow stations were
+fixed before the final analysis after considering long-record data
+availability, HydroLAKES matching, hydrological relevance, and manual review
+of multi-outlet and proxy-station cases. The reproduction route starts from
+these fixed assignments; it does not repeat nationwide candidate-lake
+screening. The assignments and observed-data coverage are documented in
+`reference/appendices/A1_lakes_and_stations.csv` and
+`reference/appendices/A2_data_availability.csv`.
 
 ## Modal Setup
 
@@ -187,16 +189,6 @@ must be directly inside the uploaded `hybas_na_lev12_v1c/` directory.
 modal volume put ccm-data /absolute/path/to/source_data/HydroLAKES_polys_v10_shp HydroLAKES_polys_v10_shp
 modal volume put ccm-data /absolute/path/to/source_data/hybas_na_lev12_v1c hybas_na_lev12_v1c
 ```
-
-If you want to reproduce the candidate-lake screening step, also upload HYDAT:
-
-```bash
-modal volume put ccm-data /absolute/path/to/Hydat.sqlite3 Hydat.sqlite3
-modal run code/00_data_generation/modal_lake_screening.py
-```
-
-The final ten-lake analysis below does not require `Hydat.sqlite3`; water-level
-and regulated-flow station series are fetched by the data-generation code.
 
 ## Official Reproduction Route
 

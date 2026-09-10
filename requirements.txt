@@ -16,7 +16,6 @@ matplotlib
 geopandas
 shapely
 pyogrio
-pyshp
 
 # Data acquisition clients.
 requests
