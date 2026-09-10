@@ -60,14 +60,13 @@ def compute_one_lake(lake: str) -> dict:
 
     # Load only the required helpers without geospatial dependencies. / 仅加载所需函数，避免引入地理依赖。
     import ast as _ast
-    _ns = {"np": np, "pd": pd, "pyEDM": __import__("pyEDM")}
+    _ns = {"np": np, "pd": pd}
     # Support Modal and local source paths. / 同时支持 Modal 与本地源码路径。
     _cands = ["/root/data_acquisition_lib.py", str(CODE_DIR / "data_acquisition_lib.py")]
     _lib = next((c for c in _cands if os.path.exists(c)), None)
     assert _lib, f"找不到 data_acquisition_lib.py，已查找: {_cands}"
     _src = open(_lib, encoding="utf-8").read()
-    _want = {"simplex_self_predict_rho", "select_E", "get_embedding_params",
-             "_config_embed_tau", "_config_embed_E_candidates"}
+    _want = {"simplex_self_predict_rho", "select_E"}
     _got = set()
     for _n in _ast.parse(_src).body:
         if isinstance(_n, _ast.FunctionDef) and _n.name in _want:
@@ -102,12 +101,13 @@ def compute_one_lake(lake: str) -> dict:
             out[var] = {"status": "insufficient_observations", "n_obs": n_obs}
             continue
         try:
-            params = _ns["get_embedding_params"](
-                values, var, verbose=False,
-                tau=config.EMBED_TAU, candidate_E=config.EMBED_E_CANDIDATES,
+            E, _ = _ns["select_E"](
+                values,
+                tau=config.EMBED_TAU,
+                candidate_E=config.EMBED_E_CANDIDATES,
             )
             out[var] = {
-                "E": int(params["E"]), "tau": int(params["tau"]), "n_obs": n_obs,
+                "E": int(E), "tau": int(config.EMBED_TAU), "n_obs": n_obs,
             }
         except Exception as exc:                  # Isolate failures by variable. / 按变量隔离失败。
             out[var] = {"status": f"ERROR: {type(exc).__name__}: {exc}", "n_obs": n_obs}
