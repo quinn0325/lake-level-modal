@@ -64,14 +64,14 @@ dissertation and provides a numerical baseline for a new full reproduction.
 
 Clone the repository:
 
-```bash
+```
 git clone https://github.com/quinn0325/lake-level-modal.git
 cd lake-level-modal
 ```
 
 Create a Python 3.11 environment and install the local dependencies:
 
-```bash
+```
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -79,7 +79,7 @@ python -m pip install -r requirements.txt
 
 Authenticate the Modal command-line client:
 
-```bash
+```
 modal setup
 ```
 
@@ -213,7 +213,7 @@ Every lake should finish with `<lake>: OK`.
 
 ### 2. Compute Embedding Parameters
 
-```bash
+```
 modal run \
   code/00_data_generation/modal_compute_embedding_params.py
 ```
@@ -230,14 +230,14 @@ The JSON file must cover all ten lakes and seven variables.
 
 Submit the 420 directed edges:
 
-```bash
+```
 modal run --detach \
   code/02_within_lake_ccm/modal_within_lake_ccm.py
 ```
 
 Check progress:
 
-```bash
+```
 modal run \
   code/02_within_lake_ccm/modal_within_lake_ccm.py \
   --status
@@ -251,7 +251,7 @@ Total edges: 420 | completed: <count> | remaining: <count>
 
 Merge only after all 420 edges have completed:
 
-```bash
+```
 modal run \
   code/02_within_lake_ccm/modal_within_lake_ccm.py \
   --merge-only
@@ -267,14 +267,14 @@ lake_results/final_v3/ccm_all_edges_merged_fdr.csv
 
 Submit the 90 directed edges:
 
-```bash
+```
 modal run --detach \
   code/03_inter_lake_ccm/modal_inter_lake_ccm.py
 ```
 
 Check progress:
 
-```bash
+```
 modal run \
   code/03_inter_lake_ccm/modal_inter_lake_ccm.py \
   --status
@@ -282,7 +282,7 @@ modal run \
 
 Merge only after all 90 edges have completed:
 
-```bash
+```
 modal run \
   code/03_inter_lake_ccm/modal_inter_lake_ccm.py \
   --merge-only
@@ -299,7 +299,7 @@ lake_results/final_v3/connectivity_connected_vs_unconnected_summary.csv
 
 Submit the server-side forecasting orchestration:
 
-```bash
+```
 modal run --detach \
   code/04_forecast/modal_forecast_synchrony_filtered.py::detached
 ```
@@ -309,7 +309,7 @@ the server-side Modal job.
 
 Expected Volume outputs:
 
-```text
+```
 lake_results/final_v3/forecast_synchrony_filtered_full_results.csv
 lake_results/final_v3/forecast_synchrony_filtered_rolling_results.csv
 lake_results/final_v3/forecast_synchrony_filtered_dm_results.csv
@@ -398,7 +398,7 @@ done
 
 After downloading the complete Modal outputs, run:
 
-```bash
+```
 python code/05_postprocess_local/build_outputs.py
 ```
 
@@ -424,7 +424,7 @@ The report-aligned outputs are:
 
 Run the output checker after local post-processing:
 
-```bash
+```
 python code/99_check_outputs/check_modal_outputs.py
 ```
 
