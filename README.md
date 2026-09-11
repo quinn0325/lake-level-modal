@@ -4,8 +4,6 @@ This repository provides the code, execution instructions and reference outputs
 for the MSc dissertation *Causal Exploration and Predictability of Lake Water
 Level: Evidence from Two Regulated Canadian River Basins*.
 
-The research design, preprocessing rules, statistical methods and parameter
-settings are documented in [`TECHNICAL_APPENDIX.md`](TECHNICAL_APPENDIX.md).
 This README is the technical guide for environment setup, input preparation,
 execution, output download and verification.
 
@@ -58,11 +56,6 @@ reference/
   appendices/               dissertation appendix tables
   dataset/                  dissertation public dataset
 ```
-
-`code/01_analysis_core/analysis_core.py` contains the shared algorithms used by
-the executable `modal_*.py` stages and is not run directly. Scripts under
-`code/06_figures/`, `code/07_tables/` and `code/08_dataset/` do not rerun CCM or
-forecasting.
 
 The committed `reference/` directory contains the outputs used in the
 dissertation and provides a numerical baseline for a new full reproduction.
@@ -330,6 +323,11 @@ The within-lake CCM, between-lake CCM and forecasting stages save successful
 shards independently. If a run is interrupted by account limits, preemption,
 terminal closure or a temporary error, rerun the same command in the same
 Modal environment with the same `ccm-data` Volume.
+
+If Modal displays `Container terminated due to preemption`, the container was
+interrupted by resource scheduling rather than by an analysis-code error. The
+interrupted task is retried according to the configured retry policy, while
+successful shards already written to the Modal Volume are retained.
 
 On a resumed run:
 
