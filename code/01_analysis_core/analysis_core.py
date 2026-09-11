@@ -738,7 +738,14 @@ def fit_auto_sarima(wl_series, test_size=12, m=12):
     wl_series = wl_series.sort_index().asfreq("MS")
     train_raw, test = wl_series[:-test_size], wl_series[-test_size:]
     train = _fill_training_block(train_raw).dropna()
-    model = pm.auto_arima(train, seasonal=True, m=m, stepwise=True, suppress_warnings=True, error_action="ignore")
+    model = pm.auto_arima(
+        train.to_numpy(),
+        seasonal=True,
+        m=m,
+        stepwise=True,
+        suppress_warnings=True,
+        error_action="ignore",
+    )
     if _arima_fit_is_degenerate(model):
         raise ValueError(
             f"auto_arima selected {model.order}x{model.seasonal_order}, "
@@ -775,8 +782,15 @@ def fit_auto_sarimax_multi(wl_series, exog_df, exog_lags, test_size=12, m=12):
             "SARIMAX cannot forecast the complete block"
         )
     # Return the fitted model because refitting fixed orders can change its intercept choice.
-    model = pm.auto_arima(train_wl, X=train_exog.values, seasonal=True, m=m,
-                          stepwise=True, suppress_warnings=True, error_action="ignore")
+    model = pm.auto_arima(
+        train_wl.to_numpy(),
+        X=train_exog.to_numpy(),
+        seasonal=True,
+        m=m,
+        stepwise=True,
+        suppress_warnings=True,
+        error_action="ignore",
+    )
     if _arima_fit_is_degenerate(model):
         raise ValueError(
             f"auto_arima selected {model.order}x{model.seasonal_order}, "

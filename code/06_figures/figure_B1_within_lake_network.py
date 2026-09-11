@@ -39,8 +39,8 @@ FS_ROW, FS_COL, FS_IN, FS_LEG, FS_BLOCK = 7.0, 8.0, 5.2, 8.2, 8.0
 mpl.rcParams.update({
     "font.family": "sans-serif",
     "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
-    "svg.fonttype": "none", "axes.linewidth": 0.7,
-    "pdf.fonttype": 42, "ps.fonttype": 42,
+    "axes.linewidth": 0.7,
+    "pdf.fonttype": 42,
     "figure.facecolor": "white", "axes.facecolor": "white",
 })
 
@@ -213,8 +213,6 @@ def main():
     for extension, options in (
         ("pdf", {}),
         ("png", {"dpi": 600}),
-        ("svg", {}),
-        ("tiff", {"dpi": 600}),
     ):
         path = OUT / f"figure_B1_within_lake_network.{extension}"
         fig.savefig(path, **options)
