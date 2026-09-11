@@ -1,5 +1,4 @@
-"""Acquire hydrological and climate data and prepare inputs for analysis.
-
+"""Acquire hydrological and climate data and prepare inputs for CCM.
 """
 import io
 
