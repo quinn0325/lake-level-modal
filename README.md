@@ -1,4 +1,4 @@
-# Lake-Level CCM Modal Reproduction
+# Lake Level CCM Modal Reproduction
 
 This repository provides the code, execution instructions and reference outputs
 for the MSc dissertation *Causal Exploration and Predictability of Lake Water
