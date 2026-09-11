@@ -145,7 +145,7 @@ reference/appendices/B2_data_availability.csv
 
 Create a new, empty Volume named `ccm-data`:
 
-```bash
+```
 modal volume create ccm-data
 ```
 
@@ -154,7 +154,7 @@ the same Volume.
 
 Create the CDS API secret:
 
-```bash
+```
 modal secret create cds-api \
   CDSAPI_URL=https://cds.climate.copernicus.eu/api \
   CDSAPI_KEY=YOUR_PERSONAL_ACCESS_TOKEN
@@ -162,7 +162,7 @@ modal secret create cds-api \
 
 Upload HydroLAKES:
 
-```bash
+```
 modal volume put ccm-data \
   /absolute/path/to/source_data/HydroLAKES_polys_v10_shp \
   HydroLAKES_polys_v10_shp
@@ -170,7 +170,7 @@ modal volume put ccm-data \
 
 Upload HydroBASINS:
 
-```bash
+```
 modal volume put ccm-data \
   /absolute/path/to/source_data/hybas_na_lev12_v1c \
   hybas_na_lev12_v1c
@@ -178,7 +178,7 @@ modal volume put ccm-data \
 
 Inspect the uploaded files:
 
-```bash
+```
 modal volume ls ccm-data
 ```
 
@@ -190,14 +190,14 @@ Run every command from the repository root.
 
 Download and cache ERA5-Land data:
 
-```bash
+```
 modal run \
   code/00_data_generation/modal_build_lake_panels.py::fetch_only
 ```
 
 Build all ten monthly lake panels:
 
-```bash
+```
 modal run \
   code/00_data_generation/modal_build_lake_panels.py::process_only
 ```
@@ -339,13 +339,13 @@ On a resumed run:
 
 Create the local runtime directories:
 
-```bash
+```
 mkdir -p lake_pkls results
 ```
 
 Download the ten lake panels:
 
-```bash
+```
 for lake in \
   Kalamalka_Lake \
   Okanagan_Lake \
@@ -367,7 +367,7 @@ done
 
 Download the embedding parameters:
 
-```bash
+```
 modal volume get \
   ccm-data \
   lake_results/full_pipeline_v2/embed_params_corrected.json \
@@ -376,7 +376,7 @@ modal volume get \
 
 Download the CCM and forecasting outputs:
 
-```bash
+```
 for file in \
   ccm_all_edges_merged_fdr.csv \
   connectivity_full_pairwise_ccm_results.csv \
