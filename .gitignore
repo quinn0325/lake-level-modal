@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .venv/
+.venv-*/
 venv/
 
 # Runtime outputs downloaded from Modal or regenerated from those downloads.

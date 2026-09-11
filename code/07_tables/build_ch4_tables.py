@@ -1,35 +1,6 @@
-"""从 results/ 派生第四章的中间表，写入 ch4_tables/。
+"""Derive the chapter-table inputs from downloaded Modal results.
 
-Local deterministic transformation only; this script does not rerun the Modal analyses.
-仅在本地进行确定性结果转换；本脚本不重新运行 Modal 分析。
-
-为什么需要这一步
-----------------
-`06_figures/` 与 `07_tables/` 下的脚本读的是 `ch4_tables/T*.csv`，而不是
-`results/` 里的原始输出。原先这些中间表由分析当时的临时脚本产出，未纳入代码库，
-链条因此在这里断了一节：拿到 `results/` 也画不出图。本脚本把这一节补上——
-六张中间表全部是 `results/` 的确定性派生，不含任何新的建模。
-
-派生关系
---------
-    T1_rolling_lake_horizon_method  = forecast_..._rolling_results（列重排）
-    T3_dm_bh                        = forecast_..._dm_results + sig_fdr + winner
-    T4_single_split_full            = forecast_..._full_results（原样）
-    T5_within_lake_edges            = ccm_all_edges_merged_fdr + 效应变量的 E/τ
-    T6_between_lake_edges           = connectivity_..._results + tier
-    T7_lake_pair_strength           = 由 T6 按湖泊对聚合
-
-tier 是写作阶段引入的事后描述性分层，不参与任何统计判定：
-    1  两湖之间有直接水道连接（config.WATERWAY_CONNECTED_PAIRS，7 对）
-    2  同一水道连通分量内，但无直接连接
-    3  同一水系，但分属不同连通分量
-    4  分属不同水系
-连通分量即把 WATERWAY_CONNECTED_PAIRS 视为无向图后的连通块：
-Okanagan 干流、Winnipeg 河、Nelson 河。
-
-跑法
-----
-    python code/07_tables/build_ch4_tables.py
+This deterministic local step does not rerun CCM or forecasting.
 """
 import json
 import sys
@@ -40,7 +11,7 @@ import pandas as pd
 
 CODE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE))
-import config                                                    # noqa: E402
+import config
 
 ROOT = CODE.parent
 RESULTS = ROOT / "results"
@@ -51,7 +22,7 @@ SYSTEM_OF = {lk: ("Okanagan" if lk in config.LAKES[:4] else "Nelson-Winnipeg")
 
 
 def waterway_components():
-    """把直接水道连接看作无向图，返回 lake -> 连通分量编号。"""
+    """Map each lake to its connected component in the waterway network."""
     comp, nxt = {}, 0
     adj = {lk: set() for lk in config.LAKES}
     for a, b in config.WATERWAY_CONNECTED_PAIRS:
@@ -75,6 +46,7 @@ DIRECT = {tuple(sorted(pair)) for pair in config.WATERWAY_CONNECTED_PAIRS}
 
 
 def tier_of(a, b):
+    """Return the descriptive hydrological-separation tier for a lake pair."""
     if tuple(sorted([a, b])) in DIRECT:
         return "1_direct"
     if COMP[a] == COMP[b]:
@@ -87,7 +59,7 @@ def tier_of(a, b):
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
 
-    # T1/T4: reorder forecast columns only. / T1/T4：仅统一预测结果列顺序。
+    # Reorder rolling-result columns and retain the complete full-result table.
     roll = pd.read_csv(RESULTS / "forecast_synchrony_filtered_rolling_results.csv")
     roll = roll[["lake", "horizon_months", "method", "rmse", "mae", "nse",
                  "n_origins", "min_exog_lag", "requires_foresight"]]
@@ -96,36 +68,37 @@ def main():
     full = pd.read_csv(RESULTS / "forecast_synchrony_filtered_full_results.csv")
     full.to_csv(OUT / "T4_single_split_full.csv", index=False)
 
-    # T3: DM results; a negative statistic favours method 1. / T3：DM 结果；负统计量表示方法 1 损失更小。
+    # A negative DM statistic favours method 1.
     dm = pd.read_csv(RESULTS / "forecast_synchrony_filtered_dm_results.csv")
     dm["sig_fdr"] = dm["p_fdr"] < config.FDR_ALPHA
     dm["winner"] = np.where(~dm["sig_fdr"], "",
                             np.where(dm["dm_stat"] < 0, dm["method_1"], dm["method_2"]))
     dm.to_csv(OUT / "T3_dm_bh.csv", index=False)
 
-    # T5: within-lake edges plus effect embeddings. / T5：湖内边及结果变量嵌入参数。
-    emb = json.loads((RESULTS / "embed_params_corrected.json").read_text())
+    # Add the effect variable's embedding parameters to each within-lake edge.
+    emb = json.loads(
+        (RESULTS / "embed_params_corrected.json").read_text(encoding="utf-8")
+    )
     w = pd.read_csv(RESULTS / "ccm_all_edges_merged_fdr.csv")
-    w["E_effect"] = [emb.get(r.lake, {}).get(r.effect, {}).get("E") for r in w.itertuples()]
-    w["tau"] = [emb.get(r.lake, {}).get(r.effect, {}).get("tau") for r in w.itertuples()]
+    w["E_effect"] = [emb[r.lake][r.effect]["E"] for r in w.itertuples()]
+    w["tau"] = [emb[r.lake][r.effect]["tau"] for r in w.itertuples()]
     w = w[["lake", "cause", "effect", "status", "obs_lag", "obs_rho", "obs_n",
            "E_effect", "tau", "p_value", "p_fdr", "kendall_tau", "kendall_p",
            "convergence_diagnostic_pass", "statistically_significant",
            "lag_resolution", "causal_evidence", "n_valid_surrogates"]]
     w.to_csv(OUT / "T5_within_lake_edges.csv", index=False)
 
-    # T6: between-lake edges plus descriptive tier. / T6：湖间边及描述性层级。
+    # Add a descriptive hydrological-separation tier to each between-lake edge.
     b = pd.read_csv(RESULTS / "connectivity_full_pairwise_ccm_results.csv")
     b["tier"] = [tier_of(r.cause_lake, r.effect_lake) for r in b.itertuples()]
     b.to_csv(OUT / "T6_between_lake_edges.csv", index=False)
 
-    # T7: pair strength is mean directional |rho|; either retained direction marks detection. / T7：湖泊对强度取双向 |rho| 均值，任一方向保留即记为检出。
+    # Pair strength is mean directional |rho|; either causal direction marks detection.
     b["key"] = [tuple(sorted([r.cause_lake, r.effect_lake])) for r in b.itertuples()]
-    b["ok"] = (b.statistically_significant & b.convergence_diagnostic_pass
-               & (b.obs_lag >= 0))
+    b["ok"] = b["causal_evidence"]
     rows = []
     for (a, c), g in b.groupby("key"):
-        rows.append({"pair": f"{a}|{c}",          # Downstream scripts format labels. / 下游脚本负责标签格式。
+        rows.append({"pair": f"{a}|{c}",
                      "S_ij": g.obs_rho.abs().mean(),
                      "detected": bool(g.ok.any()),
                      "tier": tier_of(a, c),
@@ -135,8 +108,8 @@ def main():
 
     for name, n in [("T1", len(roll)), ("T3", len(dm)), ("T4", len(full)),
                     ("T5", len(w)), ("T6", len(b)), ("T7", len(t7))]:
-        print(f"  {name}: {n} 行")
-    print(f"全部写入 {OUT}")
+        print(f"  {name}: {n} rows")
+    print(f"Wrote chapter-table inputs to {OUT}")
 
 
 if __name__ == "__main__":

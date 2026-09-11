@@ -1,29 +1,8 @@
-"""构建拟公开的月度数据集：十个受调控加拿大湖泊，1994-01 至 2024-12。
+"""Export the public monthly dataset from downloaded Modal lake panels.
 
-Local dataset export from downloaded lake panels; this script does not rerun CCM or forecasting.
-仅在本地根据已下载湖泊面板导出数据集；本脚本不重新运行 CCM 或预测分析。
-
-产出三个层次，对应三种使用需求：
-
-  raw_station     逐站原始水位（未做异常筛查、未合成），保留观测溯源
-  lake_monthly    每湖每月一行的分析级数据集：合成后的 WL 与六个驱动变量，
-                  真实缺测保留为空，未去季节化
-  lake_monthly_deseasonalised
-                  同上，但各变量已减去训练期的逐月气候态（式 3），
-                  即 CCM 与预测分析实际使用的序列
-
-去季节化只用训练期（前 335 个月）的月均值，与主流程一致，避免测试期信息泄漏。
-
-跑法
-----
-    python code/08_dataset/build_public_dataset.py
-
-输出
-----
-    final/dataset/raw_station_water_level.csv
-    final/dataset/lake_monthly.csv
-    final/dataset/lake_monthly_deseasonalised.csv
-    final/dataset/data_dictionary.csv
+The script writes station-level water levels, cleaned lake-level panels,
+deseasonalised analysis panels, and a data dictionary to ``dataset/``. It does
+not rerun CCM or forecasting.
 """
 import pickle
 import sys
@@ -32,20 +11,23 @@ from pathlib import Path
 import pandas as pd
 
 CODE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(CODE))
 sys.path.insert(0, str(CODE / "01_analysis_core"))
-import analysis_core as p                                        # noqa: E402
+import analysis_core as p  # noqa: E402
+from config import LAKES  # noqa: E402
 
+# Avoid printing the same outlier messages while exporting derived files.
 p.log = lambda msg: None
 OUT = CODE.parent / "dataset"
 PKL = Path(p.PKL_DIR)
 
-SYSTEMS = [("Okanagan", ["Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake",
-                         "Vaseux_Lake"]),
-           ("Nelson-Winnipeg", ["Rainy_Lake", "Lake_of_the_Woods",
-                                "Playgreen_Lake", "Kiskitto_Lake",
-                                "Sipiwesk_Lake", "Split_Lake"])]
-LAKES = [lk for _, g in SYSTEMS for lk in g]
-SYSTEM_OF = {lk: n for n, g in SYSTEMS for lk in g}
+OKANAGAN_LAKES = {
+    "Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake", "Vaseux_Lake",
+}
+SYSTEM_OF = {
+    lake: "Okanagan" if lake in OKANAGAN_LAKES else "Nelson-Winnipeg"
+    for lake in LAKES
+}
 LABEL = {lk: lk.replace("_Lake", "").replace("_", " ") for lk in LAKES}
 LABEL["Lake_of_the_Woods"] = "Lake of the Woods"
 VARS = ["RegFlow", "R", "P", "Evap", "SWE", "T"]
@@ -91,8 +73,7 @@ def main():
                 "station": st, "month": s.index.strftime("%Y-%m-%d"),
                 "water_level_m": s.values}))
 
-        wl = p.combine_station_water_levels(
-            p.clean_wide_wl(cached["wide_wl"]), method="anomaly_mean")
+        wl = p.combine_station_water_levels(p.clean_wide_wl(cached["wide_wl"]))
         wl = wl.sort_index().asfreq("MS")
         pred = cached["real_predictors"].copy()
         pred.index = pd.DatetimeIndex(pred.index)
@@ -106,18 +87,17 @@ def main():
         rows = []
         for lk, panel in dct.items():
             df = panel.reset_index(names="month")
-            df.insert(0, "hydrolakes_id", None)
             df.insert(0, "system", SYSTEM_OF[lk])
             df.insert(0, "lake", LABEL[lk])
             df["month"] = pd.DatetimeIndex(df["month"]).strftime("%Y-%m-%d")
-            rows.append(df.drop(columns="hydrolakes_id"))
+            rows.append(df)
         out = pd.concat(rows, ignore_index=True)
         out.to_csv(OUT / name, index=False)
         return out
 
     lm = stack(panels, "lake_monthly.csv")
 
-    # Match the training-only deseasonalisation used by the analysis. / 与分析一致，仅用训练期去季节化。
+    # Match the training-only deseasonalisation used by the analysis.
     train_end = len(next(iter(panels.values()))) - p.FORECAST_HORIZON
     des = {lk: panel.apply(lambda c: p.deseasonalize(c, train_end=train_end))
            for lk, panel in panels.items()}

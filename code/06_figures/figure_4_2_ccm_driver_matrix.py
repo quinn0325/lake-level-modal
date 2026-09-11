@@ -1,35 +1,12 @@
-"""Figure 4.2 — 湖内 CCM 因果筛查结果（RQ1）。
+"""Render Figure 4.2 from the complete within-lake CCM results.
 
-Local rendering from downloaded results; this script does not rerun CCM.
-仅在本地读取已下载结果并绘图；本脚本不重新运行 CCM。
-
-driver → WL 结果矩阵（热图）：10 个湖 × 6 个候选驱动变量。
-    仅同时通过 BH-FDR（α = 0.05，检验族 = 420 条湖内候选边）与收敛诊断的
-    24 条关系着色，未通过筛选的格子留白。
-      格子颜色深浅 = cross-map skill ρ
-      格内数字     = 最优时滞 d（月），带符号，如 +2 / 0 / −1
-      格子描边     = 时序类别，紫 = d = 0（同月），灰 = d < 0（效应领先）；
-                     d > 0 无描边，即正常的「原因领先」情形
-该矩阵同时承载正文最重要的几个结果：RegFlow 最普遍、Runoff 与
-Precipitation 次之、Temperature 无 positive-lag direct relationship、
-Vaseux 关系最多而 Skaha 一条都没有，以及 4 例同月与 2 例逆序。
-
-约定
-----
-· d 的符号约定与 analysis_core 一致：d > 0 表示原因领先效应。
-  （相对 Ye et al. 2015 的 ℓ，本文 d = −ℓ。）
-· 数据源为 ch4_tables/T5_within_lake_edges.csv（420 条），出自
-  2026-08-31 重跑结果。
-· statistically_significant 字段本身已包含收敛诊断，见
-  analysis_core.apply_fdr_and_causal_evidence，因此不必再取一次交集。
-
-输出
-----
-    results/figures/figure_4_2_ccm_driver_matrix.svg / .pdf / .png / .tiff
+Supported driver-to-water-level relationships are coloured by cross-map skill
+and labelled with the selected signed lag.
 """
 from pathlib import Path
 
 import matplotlib as mpl
+mpl.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -53,16 +30,15 @@ DRIVERS = ["RegFlow", "R", "P", "Evap", "SWE", "T"]
 DRIVER_LABEL = {"RegFlow": "Regulated flow", "R": "Runoff", "P": "Precipitation",
                 "Evap": "Evaporation", "SWE": "SWE", "T": "Temperature"}
 
-C_ZERO = "#B9785A"       # Contemporaneous d=0 / 同期 d=0
-C_NEG = "#777777"        # Reverse timing d<0 / 逆序 d<0
+C_ZERO = "#B9785A"
+C_NEG = "#777777"
 CMAP = LinearSegmentedColormap.from_list(
     "rho", ["#F4F8FB", "#C5DFED", "#84BBD8", "#347EAF", "#124B7A"])
-NORM = Normalize(vmin=0.0, vmax=1.0)     # Full theoretical rho range / rho 的完整理论范围
-TXT_FLIP = 0.62                          # White-text threshold / 白色文字阈值
+NORM = Normalize(vmin=0.0, vmax=1.0)
+TXT_FLIP = 0.62
 
-# Typography assumes full-width placement in the dissertation. / 字号按论文正文全宽排版设置。
 FS_TICK, FS_LAB, FS_TITLE, FS_IN, FS_LEG = 10.0, 11.0, 12.0, 9.5, 10.0
-FS_HEAD = 10.0                  # Rotated column headers / 旋转列标题
+FS_HEAD = 10.0
 LEFT, RIGHT = 0.292, 0.900
 
 mpl.rcParams.update({
@@ -78,14 +54,52 @@ mpl.rcParams.update({
 })
 
 
+def load_supported_edges():
+    """Validate the 420-edge input and return supported driver-to-WL edges."""
+    edges = pd.read_csv(TAB_DIR / "T5_within_lake_edges.csv")
+    required = {
+        "lake", "cause", "effect", "status", "obs_lag", "obs_rho",
+        "convergence_diagnostic_pass", "statistically_significant",
+    }
+    missing_columns = required - set(edges.columns)
+    if missing_columns:
+        raise ValueError(f"Missing input columns: {sorted(missing_columns)}")
+
+    variables = ["WL", *DRIVERS]
+    expected = {
+        (lake, cause, effect)
+        for lake in LAKES
+        for cause in variables
+        for effect in variables
+        if cause != effect
+    }
+    actual = set(edges[["lake", "cause", "effect"]].itertuples(
+        index=False, name=None))
+    if len(edges) != 420 or actual != expected:
+        raise ValueError(
+            f"Expected exactly 420 within-lake edges; found {len(edges)} rows "
+            f"and {len(actual)} unique edges")
+    if not edges["status"].eq("OK").all():
+        raise ValueError("Within-lake input contains non-OK results")
+
+    supported = edges[
+        (edges["effect"] == "WL") & edges["statistically_significant"]
+    ].copy()
+    if not supported["convergence_diagnostic_pass"].all():
+        raise ValueError("A supported edge failed the convergence diagnostic")
+    if not np.isfinite(supported[["obs_lag", "obs_rho"]].to_numpy()).all():
+        raise ValueError("Supported edges contain invalid lag or skill values")
+    return supported
+
+
 def lag_text(d):
-    """+2 / 0 / −1，负号用 U+2212 以匹配正文排版。"""
+    """Format a signed lag using the typographic minus sign."""
     return "0" if d == 0 else (f"+{d}" if d > 0 else f"−{abs(d)}")
 
 
 def draw_matrix(ax, sup):
     ny, nx = len(LAKES), len(DRIVERS)
-    for i in range(ny):                                   # Draw blank cells first. / 先绘制空白单元格。
+    for i in range(ny):
         for j in range(nx):
             ax.add_patch(Rectangle((j - .5, i - .5), 1, 1, facecolor="white",
                                    edgecolor="0.86", lw=0.55, zorder=1))
@@ -124,11 +138,10 @@ def draw_matrix(ax, sup):
 
 
 def draw_key(axl):
-    """时序类别描边说明和 ρ 色标。"""
+    """Draw the temporal-order key and cross-map skill scale."""
     axl.set_axis_off()
     axl.set_xlim(0, 1)
     axl.set_ylim(0, 1)
-    # Place timing classes above the colour scale. / 时序类别位于色标上方。
     for x, y, c, lab in ((0.015, 0.70, C_ZERO, "d = 0  contemporaneous"),
                          (0.515, 0.70, C_NEG, "d < 0  opposite temporal order")):
         axl.add_patch(Rectangle((x, y - 0.13), 0.026, 0.26,
@@ -149,56 +162,28 @@ def save(fig, stem):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT_DIR / f"{stem}.svg", format="svg",
                 bbox_inches=None)
-    print(f"wrote {OUT_DIR / f'{stem}.svg'}")
+    print(f"Wrote {OUT_DIR / f'{stem}.svg'}")
     fig.savefig(OUT_DIR / f"{stem}.pdf", format="pdf",
                 bbox_inches=None)
-    print(f"wrote {OUT_DIR / f'{stem}.pdf'}")
+    print(f"Wrote {OUT_DIR / f'{stem}.pdf'}")
     fig.savefig(OUT_DIR / f"{stem}.png", format="png", dpi=600,
                 bbox_inches=None)
-    print(f"wrote {OUT_DIR / f'{stem}.png'}")
+    print(f"Wrote {OUT_DIR / f'{stem}.png'}")
     fig.savefig(OUT_DIR / f"{stem}.tiff", format="tiff", dpi=600,
                 bbox_inches=None)
-    print(f"wrote {OUT_DIR / f'{stem}.tiff'}")
+    print(f"Wrote {OUT_DIR / f'{stem}.tiff'}")
     plt.close(fig)
 
 
 def main():
-    t5 = pd.read_csv(TAB_DIR / "T5_within_lake_edges.csv")
-    sup = t5[(t5.effect == "WL") & t5.statistically_significant].copy()
+    supported = load_supported_edges()
 
-    # Standalone matrix / 独立矩阵图
     fig = plt.figure(figsize=(6.3, 5.30))
     gs = fig.add_gridspec(2, 1, height_ratios=[10.0, 2.15], hspace=0.0,
                           left=LEFT, right=RIGHT, top=0.874, bottom=0.058)
-    draw_matrix(fig.add_subplot(gs[0]), sup)
+    draw_matrix(fig.add_subplot(gs[0]), supported)
     draw_key(fig.add_subplot(gs[1]))
     save(fig, "figure_4_2_ccm_driver_matrix")
-
-    # Numerical checks / 数值核对
-    print(f"\nwithin-lake edges tested   : {len(t5)}")
-    print(f"  supported                : {int(t5.statistically_significant.sum())}")
-    print(f"driver -> WL tested        : {int((t5.effect == 'WL').sum())}")
-    print(f"  supported                : {len(sup)}")
-    cls = sup.obs_lag.map(lambda d: "pos" if d > 0 else ("zero" if d == 0 else "neg"))
-    print("  temporal class           : "
-          + ", ".join(f"{k}={v}" for k, v in cls.value_counts()
-                      .reindex(["pos", "zero", "neg"]).items()))
-    print(f"  rho range (coloured)     : {sup.obs_rho.min():.3f}-{sup.obs_rho.max():.3f}")
-    ps = sup[sup.obs_lag > 0]
-    print("\npositive-lag drivers:")
-    for drv in DRIVERS:
-        s = ps[ps.cause == drv]
-        name = DRIVER_LABEL[drv].replace("\n", " ")
-        if len(s):
-            print(f"  {name:<16} n={s.lake.nunique()}  median rho="
-                  f"{s.obs_rho.median():.3f}  lag {int(s.obs_lag.min())}-"
-                  f"{int(s.obs_lag.max())}")
-        else:
-            print(f"  {name:<16} n=0")
-    per_lake = sup[sup.obs_lag > 0].groupby("lake").size()
-    print("\npositive-lag driver count per lake:")
-    for lk in LAKES:
-        print(f"  {LABEL[lk]:<18} {int(per_lake.get(lk, 0))}")
 
 
 if __name__ == "__main__":

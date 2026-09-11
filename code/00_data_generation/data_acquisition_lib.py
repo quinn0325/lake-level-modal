@@ -1,9 +1,5 @@
-"""Acquire hydrological and climate data and prepare inputs for CCM.
+"""Acquire hydrological and climate data and prepare inputs for analysis.
 
-This function library is used by the Modal data stage; it is not a separate
-executable route. Monthly series retain the complete calendar, with missing
-months represented as NaN before time-delay embedding. Configuration is
-imported from ``modal_build_lake_panels``.
 """
 import io
 
@@ -259,7 +255,7 @@ def resolve_hylak_id(hydrolakes_gdf, ref_lonlat, country="Canada",
     return int(best["Hylak_id"])
 
 
-# Unit conversion and embedding
+# Unit conversion
 
 def _days_in_month(series):
     """Return the number of days represented by each monthly observation."""
@@ -282,41 +278,3 @@ def convert_era5_units(var_name, series):
     if var_name == "Evap":
         return -series * 1000.0 * _days_in_month(series)
     raise ValueError(f"unknown variable {var_name}")
-
-
-def simplex_self_predict_rho(values, E, tau, exclusion_radius=None):
-    """Return Simplex self-prediction rho for one E/tau combination.
-
-    Return NaN if Simplex fails or produces fewer than two valid pairs.
-    """
-    import pyEDM
-
-    n = len(values)
-    df = pd.DataFrame({"time": np.arange(n), "v": values})
-    full = f"1 {n}"
-    exclusion_radius = exclusion_radius if exclusion_radius is not None else max(tau, 1)
-    try:
-        res = pyEDM.Simplex(dataFrame=df, columns="v", target="v", lib=full, pred=full,
-                             E=E, tau=-tau, exclusionRadius=exclusion_radius, embedded=False)
-    except Exception:
-        return np.nan
-    obs, pred = res["Observations"], res["Predictions"]
-    mask = obs.notna() & pred.notna()
-    if mask.sum() < 2:
-        return np.nan
-    return np.corrcoef(obs[mask], pred[mask])[0, 1]
-
-
-def select_E(values, tau, candidate_E=range(2, 11), fallback_E=2):
-    """Select E by maximum valid Simplex rho, with a marked fallback."""
-    rows = []
-    for E in candidate_E:
-        rho = simplex_self_predict_rho(values, E=E, tau=tau)
-        rows.append({"E": E, "rho": rho})
-    curve = pd.DataFrame(rows)
-    if curve["rho"].notna().any():
-        best_row = curve.loc[curve["rho"].idxmax()]
-        return int(best_row["E"]), curve
-    curve = curve.copy()
-    curve["note"] = "all_candidate_E_failed_insufficient_contiguous_data_using_fallback"
-    return fallback_E, curve
