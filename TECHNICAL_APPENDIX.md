@@ -38,12 +38,17 @@ through forecasting run on Modal.
 | WSC | [Monthly hydrometric service](https://wateroffice.ec.gc.ca/services/monthly_data/csv/inline) | Monthly water level and regulated discharge |
 | ERA5-Land | [Monthly averaged reanalysis](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means) through the CDS API | Temperature, precipitation, runoff, snow water equivalent and evaporation |
 
-The fixed sample comprises Kalamalka, Okanagan, Skaha, Vaseux, Rainy, Lake of
-the Woods, Playgreen, Kiskitto, Sipiwesk and Split lakes. Station assignments
-and data coverage are reported in
-`reference/appendices/A1_lakes_and_stations.csv` and
-`reference/appendices/B2_data_availability.csv`. Reproduction does not repeat
-candidate-lake screening.
+Candidate lakes were first assessed for long monthly water-level records, a
+reliable HydroLAKES match, a usable regulated-flow series, and relevance to the
+two study systems. Lake and station assignments were then checked manually
+against hydrological context, including multi-outlet lakes and downstream
+regulation proxies. Because this step depends on contextual judgement and the
+public databases change over time, a mechanical rescreen would not necessarily
+recover exactly the same sample. The final sample comprises Kalamalka,
+Okanagan, Skaha, Vaseux, Rainy, Lake of the Woods, Playgreen, Kiskitto,
+Sipiwesk and Split lakes. Its station assignments and data coverage are
+reported in `reference/appendices/A1_lakes_and_stations.csv` and
+`reference/appendices/B2_data_availability.csv`.
 
 ## 4. Methods and fixed settings
 
@@ -65,7 +70,7 @@ points and is not a separate local analysis route.
 ## 5. Execution
 
 Run from the repository root. The exact setup, upload and download commands are
-listed in `MODAL_REPRODUCTION.md`.
+listed in `README.md`.
 
 | Order | Location | Command or entry point | Output |
 | ---: | --- | --- | --- |

@@ -72,8 +72,7 @@ mpl.rcParams.update({
     "axes.linewidth": 0.7, "axes.labelsize": FS_LAB,
     "xtick.labelsize": FS_TICK, "ytick.labelsize": FS_TICK,
     "xtick.major.width": 0.7, "ytick.major.width": 0.7,
-    "pdf.fonttype": 42, "ps.fonttype": 42,
-    "svg.fonttype": "none",
+    "pdf.fonttype": 42,
 })
 
 
@@ -273,10 +272,8 @@ def save(fig, stem):
     """Save one figure in the publication and preview formats."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for extension, options in (
-        ("svg", {}),
         ("pdf", {"dpi": 300}),
         ("png", {"dpi": 400}),
-        ("tiff", {"dpi": 600}),
     ):
         path = OUT_DIR / f"{stem}.{extension}"
         fig.savefig(path, bbox_inches="tight", **options)

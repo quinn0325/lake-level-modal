@@ -43,7 +43,7 @@ mpl.rcParams.update({
     "xtick.labelsize": FS_TICK, "ytick.labelsize": FS_TICK,
     "xtick.major.width": 0.7, "ytick.major.width": 0.7,
     "xtick.major.size": 3.0, "ytick.major.size": 3.0,
-    "pdf.fonttype": 42, "ps.fonttype": 42,
+    "pdf.fonttype": 42,
 })
 
 

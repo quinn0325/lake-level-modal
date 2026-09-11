@@ -44,12 +44,11 @@ LEFT, RIGHT = 0.292, 0.900
 mpl.rcParams.update({
     "font.family": "sans-serif",
     "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans", "Liberation Sans"],
-    "svg.fonttype": "none",
     "axes.linewidth": 0.8, "axes.labelsize": FS_LAB,
     "xtick.labelsize": FS_TICK, "ytick.labelsize": FS_TICK,
     "xtick.major.width": 0.7, "ytick.major.width": 0.6,
     "xtick.major.size": 2.5, "ytick.major.size": 0.0,
-    "pdf.fonttype": 42, "ps.fonttype": 42,
+    "pdf.fonttype": 42,
     "figure.facecolor": "white", "axes.facecolor": "white",
 })
 
@@ -160,18 +159,12 @@ def draw_key(axl):
 
 def save(fig, stem):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT_DIR / f"{stem}.svg", format="svg",
-                bbox_inches=None)
-    print(f"Wrote {OUT_DIR / f'{stem}.svg'}")
     fig.savefig(OUT_DIR / f"{stem}.pdf", format="pdf",
                 bbox_inches=None)
     print(f"Wrote {OUT_DIR / f'{stem}.pdf'}")
     fig.savefig(OUT_DIR / f"{stem}.png", format="png", dpi=600,
                 bbox_inches=None)
     print(f"Wrote {OUT_DIR / f'{stem}.png'}")
-    fig.savefig(OUT_DIR / f"{stem}.tiff", format="tiff", dpi=600,
-                bbox_inches=None)
-    print(f"Wrote {OUT_DIR / f'{stem}.tiff'}")
     plt.close(fig)
 
 

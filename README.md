@@ -1,295 +1,320 @@
 # Lake-Level CCM Modal Reproduction
 
-This repository contains the code and reference outputs for the MSc dissertation
-*Causal Exploration and Predictability of Lake Water Level: Evidence from Two
-Regulated Canadian River Basins*.
+This repository provides the code, execution instructions and reference outputs
+for the MSc dissertation *Causal Exploration and Predictability of Lake Water
+Level: Evidence from Two Regulated Canadian River Basins*.
 
-## Project Overview
+The research design, preprocessing rules, statistical methods and parameter
+settings are documented in [`TECHNICAL_APPENDIX.md`](TECHNICAL_APPENDIX.md).
+This README is the technical guide for environment setup, input preparation,
+execution, output download and verification.
 
-The project studies whether changes in regulated Canadian lake water levels can
-be linked to hydrological and climatic drivers, and whether those inferred
-causal relationships improve short-term water-level prediction. The analysis
-covers ten regulated lakes from two Canadian river-basin systems over January
-1994 to December 2024.
+## Reproduction Workflow
 
-The workflow combines four components:
+```text
+Prepare HydroLAKES, HydroBASINS and CDS credentials
+                         ↓
+Build 10 monthly lake panels on Modal
+                         ↓
+Compute embedding parameters on Modal
+                         ↓
+Run 420 within-lake CCM edges on Modal
+                         ↓
+Run 90 between-lake CCM edges on Modal
+                         ↓
+Run forecasting on Modal
+                         ↓
+Download the Modal outputs
+                         ↓
+Build tables, figures, appendices and the public dataset locally
+                         ↓
+Check output completeness
+```
 
-1. Monthly lake-panel construction from public hydrometric, climate and
-   geospatial data.
-2. Embedding-parameter selection for convergent cross mapping (CCM).
-3. Within-lake and between-lake CCM experiments with surrogate testing and
-   false-discovery-rate correction.
-4. Forecasting experiments comparing baseline models with CCM-informed
-   predictors.
-
-The main outputs are the lake-level analysis tables, figures, appendices and
-public derived dataset used to support the dissertation results.
-
-The standalone [technical appendix](TECHNICAL_APPENDIX.md) summarises the data,
-analytical procedures, fixed parameters, execution route and verification
-criteria. The compact [Modal command sheet](MODAL_REPRODUCTION.md) contains the
-complete copy-and-paste command sequence.
-
-## Reproduction Scope
-
-This repository provides one official reproduction route:
-
-1. Prepare public source data locally.
-2. Upload required geospatial files and credentials to Modal.
-3. Run data generation, embedding selection, CCM and forecasting on Modal.
-4. Download Modal outputs.
-5. Run local post-processing only for tables, figures, datasets and checks.
-
-The local post-processing scripts do not rerun CCM or forecasting. The local
-analysis driver from the earlier repository has been removed to avoid a second
-reproduction route.
-
-The committed `reference/` directory contains reference outputs from the
-original Modal run. These files are included so that a reviewer can first verify
-the local post-processing and output checks without paying the cost of a full
-Modal rerun.
+Data generation, embedding selection, CCM and forecasting run on Modal. Local
+scripts only transform the downloaded outputs into the final dissertation
+materials.
 
 ## Repository Layout
 
 ```text
 code/
-  00_data_generation/       source-data functions and Modal data-stage entry points
+  00_data_generation/       data acquisition and lake-panel construction
   01_analysis_core/         shared scientific algorithms; not run directly
-  02_within_lake_ccm/       Modal stage for 420 within-lake CCM edges
-  03_inter_lake_ccm/        Modal stage for 90 between-lake CCM edges
-  04_forecast/              Modal stage for the forecasting experiment
-  05_postprocess_local/     one local entry point for post-processing
-  06_figures/               local figure rendering from downloaded outputs
-  07_tables/                local deterministic table builders
-  08_dataset/               local dataset builder from downloaded lake PKLs
-  99_check_outputs/         checks downloaded Modal outputs
+  02_within_lake_ccm/       within-lake CCM Modal entry point
+  03_inter_lake_ccm/        between-lake CCM Modal entry point
+  04_forecast/              forecasting Modal entry point
+  05_postprocess_local/     single local post-processing entry point
+  06_figures/               local figure builders
+  07_tables/                local table and appendix builders
+  08_dataset/               local public-dataset builder
+  99_check_outputs/         output-completeness checker
+
 reference/
-  results/                  committed reference CSV/JSON outputs
-  lake_pkls/                committed reference panel pickles
-  figures/                  committed reference figures and map cache layers
-  tables/                   committed reference main-text table
-  appendices/               committed reference appendix CSVs
-  dataset/                  committed reference public dataset
+  results/                  dissertation analysis outputs
+  lake_pkls/                dissertation lake panels
+  figures/                  dissertation figures and map cache layers
+  tables/                   dissertation main-text table
+  appendices/               dissertation appendix tables
+  dataset/                  dissertation public dataset
 ```
 
-`code/01_analysis_core/analysis_core.py` is the shared scientific algorithm
-library and is not run directly. Scripts whose names begin with `modal_` are the
-only executable analysis stages: they set the experiment-specific inputs and
-parameters, call the shared algorithms, schedule work on Modal, and merge or
-save the outputs in the `ccm-data` Volume. Together they form one implementation
-route, not parallel local and cloud versions. Scripts under `06`–`08` only turn
-downloaded outputs into figures, tables and datasets; they do not rerun CCM or
+`code/01_analysis_core/analysis_core.py` contains the shared algorithms used by
+the executable `modal_*.py` stages and is not run directly. Scripts under
+`code/06_figures/`, `code/07_tables/` and `code/08_dataset/` do not rerun CCM or
 forecasting.
 
-Runtime directories such as `results/` (including `results/figures/`),
-`lake_pkls/`, `ch4_tables/`, `appendices/` and `dataset/` are generated after
-the Modal outputs are downloaded.
+The committed `reference/` directory contains the outputs used in the
+dissertation and provides a numerical baseline for a new full reproduction.
 
-## Environment
+## Local Setup
 
-Use Python 3.11 for the local command-line environment and post-processing:
+Clone the repository:
+
+```bash
+git clone https://github.com/quinn0325/lake-level-modal.git
+cd lake-level-modal
+```
+
+Create a Python 3.11 environment and install the local dependencies:
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+```
+
+Authenticate the Modal command-line client:
+
+```bash
 modal setup
 ```
 
-Each Modal stage defines its own remote environment. The data-generation and
-CCM images use Python 3.11. The forecasting image uses Python 3.12 because the
-reported tuning results were reproduced with `xgboost==3.4.1`, which requires
-Python 3.12. XGBoost is installed in that remote image and is not required for
-local post-processing.
-
-## Quick Local Verification With Reference Outputs
-
-Before running the full Modal pipeline, the committed reference outputs can be
-replayed locally to check that the repository, Python environment and
-post-processing code are complete.
-
-```bash
-mkdir -p lake_pkls results
-cp reference/lake_pkls/*.pkl lake_pkls/
-cp reference/results/* results/
-
-python code/05_postprocess_local/build_outputs.py
-python code/99_check_outputs/check_modal_outputs.py
-```
-
-This verification does not rerun CCM or forecasting. It should finish in a few
-minutes and end with:
-
-```text
-Modal output checks passed.
-```
+All commands below assume the current Modal environment. If a named environment
+is used, specify the same `--env` on every `modal run`, `modal volume` and
+`modal secret` command.
 
 ## Source Data
 
-The analysis covers January 1994 through December 2024. Download and extract
-the required geospatial products before starting the Modal run:
+Download and extract the two required geospatial products:
 
-| Dataset | Where to get it | Exact file/product used here | Role in this project |
+| Dataset | Version | Download | Use |
 | --- | --- | --- | --- |
-| HydroLAKES | [HydroLAKES product page](https://www.hydrosheds.org/products/hydrolakes) or direct ZIP: <https://data.hydrosheds.org/file/hydrolakes/HydroLAKES_polys_v10_shp.zip> | `HydroLAKES_polys_v10_shp.zip` | lake polygons and lake-grid masks |
-| HydroBASINS | [HydroBASINS product page](https://www.hydrosheds.org/products/hydrobasins) or direct ZIP: <https://data.hydrosheds.org/file/hydrobasins/standard/hybas_na_lev12_v1c.zip> | `hybas_na_lev12_v1c.zip`, standard North America level 12, version 1c | upstream-basin masks |
+| HydroLAKES | v1.0 | [`HydroLAKES_polys_v10_shp.zip`](https://data.hydrosheds.org/file/hydrolakes/HydroLAKES_polys_v10_shp.zip) | lake polygons and lake-grid masks |
+| HydroBASINS | North America level 12, v1c | [`hybas_na_lev12_v1c.zip`](https://data.hydrosheds.org/file/hydrobasins/standard/hybas_na_lev12_v1c.zip) | upstream-basin masks |
 
-After extraction, arrange the shapefile components as follows. A shapefile is
-not only its `.shp` file: keep its accompanying `.dbf`, `.shx`, `.prj` and
-other files in the same directory.
+Keep every shapefile component (`.shp`, `.dbf`, `.shx`, `.prj` and associated
+files) in the same directory:
 
 ```text
 source_data/
   HydroLAKES_polys_v10_shp/
-    .../HydroLAKES_polys_v10.shp
-    .../HydroLAKES_polys_v10.dbf
-    ...
+    .../
+      HydroLAKES_polys_v10.shp
+      HydroLAKES_polys_v10.dbf
+      HydroLAKES_polys_v10.shx
+      HydroLAKES_polys_v10.prj
+      ...
+
   hybas_na_lev12_v1c/
     hybas_na_lev12_v1c.shp
     hybas_na_lev12_v1c.dbf
     hybas_na_lev12_v1c.shx
+    hybas_na_lev12_v1c.prj
     ...
 ```
 
-Monthly water-level and regulated-flow series are fetched directly by the
-Modal data-generation code from the Water Survey of Canada historical
-hydrometric data service. No manual WSC download or local HYDAT database is
-required for the official ten-lake route.
+HydroLAKES may contain a nested shapefile directory. The HydroBASINS `.shp`
+file must be directly inside `hybas_na_lev12_v1c/`.
 
-ERA5-Land is not downloaded manually. The Modal data-generation job retrieves
-the [ERA5-Land monthly averaged dataset](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means)
-through the CDS API. Create a CDS account, accept the dataset terms and obtain
-the URL and personal access token using the [official CDS API setup
-instructions](https://cds.climate.copernicus.eu/how-to-api).
+Monthly water-level and regulated-flow observations are retrieved directly from
+the Water Survey of Canada historical hydrometric service. A local HYDAT
+database is not required.
 
-In short, a full rerun requires manual preparation of only the two HydroSHEDS
-ZIP files above plus a valid CDS API credential. WSC and ERA5-Land time series
-are downloaded by the Modal jobs.
+ERA5-Land monthly data are retrieved through the Copernicus CDS API. Before
+running the data stage:
 
-## Fixed Study Sample
+1. create a [Copernicus Climate Data Store](https://cds.climate.copernicus.eu/)
+   account;
+2. accept the licence for the
+   [ERA5-Land monthly averaged dataset](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means);
+3. obtain a personal CDS API access token.
 
-The ten study lakes and their water-level and regulated-flow stations were
-fixed before the final analysis after considering long-record data
-availability, HydroLAKES matching, hydrological relevance, and manual review
-of multi-outlet and proxy-station cases. The reproduction route starts from
-these fixed assignments; it does not repeat nationwide candidate-lake
-screening. The assignments and observed-data coverage are documented in
-`reference/appendices/A1_lakes_and_stations.csv` and
-`reference/appendices/B2_data_availability.csv`.
+The ten lake and station assignments are fixed in the code. Their identities
+and observed-data coverage are recorded in:
+
+```text
+reference/appendices/A1_lakes_and_stations.csv
+reference/appendices/B2_data_availability.csv
+```
 
 ## Modal Setup
 
-This reproduction route must start with a newly created, empty Modal Volume
-named `ccm-data`. Do not reuse a Volume containing outputs produced by an
-earlier code version or different parameters. The shard files are used for
-resume support and are identified by filename, so reusing an old Volume could
-mix results from different runs.
-
-Create the empty Volume and the CDS API secret:
+Create a new, empty Volume named `ccm-data`:
 
 ```bash
 modal volume create ccm-data
+```
+
+Do not mix shards produced by different code versions or analysis parameters in
+the same Volume.
+
+Create the CDS API secret:
+
+```bash
 modal secret create cds-api \
   CDSAPI_URL=https://cds.climate.copernicus.eu/api \
   CDSAPI_KEY=YOUR_PERSONAL_ACCESS_TOKEN
 ```
 
-Upload the two extracted geospatial directories. The HydroBASINS `.shp` file
-must be directly inside the uploaded `hybas_na_lev12_v1c/` directory.
+Upload HydroLAKES:
 
 ```bash
-modal volume put ccm-data /absolute/path/to/source_data/HydroLAKES_polys_v10_shp HydroLAKES_polys_v10_shp
-modal volume put ccm-data /absolute/path/to/source_data/hybas_na_lev12_v1c hybas_na_lev12_v1c
+modal volume put ccm-data \
+  /absolute/path/to/source_data/HydroLAKES_polys_v10_shp \
+  HydroLAKES_polys_v10_shp
+```
+
+Upload HydroBASINS:
+
+```bash
+modal volume put ccm-data \
+  /absolute/path/to/source_data/hybas_na_lev12_v1c \
+  hybas_na_lev12_v1c
+```
+
+Inspect the uploaded files:
+
+```bash
+modal volume ls ccm-data
 ```
 
 ## Official Reproduction Route
 
-Run all commands from the repository root.
+Run every command from the repository root.
 
-### 1. Build Monthly Lake Panels On Modal
+### 1. Build Monthly Lake Panels
+
+Download and cache ERA5-Land data:
 
 ```bash
-modal run code/00_data_generation/modal_build_lake_panels.py::fetch_only
-modal run code/00_data_generation/modal_build_lake_panels.py::process_only
+modal run \
+  code/00_data_generation/modal_build_lake_panels.py::fetch_only
 ```
 
-Expected Modal Volume outputs:
+Build all ten monthly lake panels:
+
+```bash
+modal run \
+  code/00_data_generation/modal_build_lake_panels.py::process_only
+```
+
+Expected Volume outputs:
 
 ```text
 lake_results/<lake>_result.pkl
 era5_downloads/<lake>_era5land_monthly.nc
 ```
 
-### 2. Compute Embedding Parameters On Modal
+Every lake should finish with `<lake>: OK`.
+
+### 2. Compute Embedding Parameters
 
 ```bash
-modal run code/00_data_generation/modal_compute_embedding_params.py
+modal run \
+  code/00_data_generation/modal_compute_embedding_params.py
 ```
 
-Expected Modal Volume output:
+Expected Volume output:
 
 ```text
 lake_results/full_pipeline_v2/embed_params_corrected.json
 ```
 
-### 3. Run Within-Lake CCM On Modal
+The JSON file must cover all ten lakes and seven variables.
+
+### 3. Run Within-Lake CCM
+
+Submit the 420 directed edges:
 
 ```bash
-modal run --detach code/02_within_lake_ccm/modal_within_lake_ccm.py
+modal run --detach \
+  code/02_within_lake_ccm/modal_within_lake_ccm.py
 ```
 
-Progress check:
+Check progress:
 
 ```bash
-modal volume ls ccm-data lake_results/final_v3/edges | grep -c json
+modal run \
+  code/02_within_lake_ccm/modal_within_lake_ccm.py \
+  --status
 ```
 
-Only after the count reaches exactly 420:
+The status has the following form:
+
+```text
+Total edges: 420 | completed: <count> | remaining: <count>
+```
+
+Merge only after all 420 edges have completed:
 
 ```bash
-modal run code/02_within_lake_ccm/modal_within_lake_ccm.py --merge-only
+modal run \
+  code/02_within_lake_ccm/modal_within_lake_ccm.py \
+  --merge-only
 ```
 
-Expected Modal Volume output:
+Expected Volume output:
 
 ```text
 lake_results/final_v3/ccm_all_edges_merged_fdr.csv
 ```
 
-### 4. Run Between-Lake CCM On Modal
+### 4. Run Between-Lake CCM
+
+Submit the 90 directed edges:
 
 ```bash
-modal run --detach code/03_inter_lake_ccm/modal_inter_lake_ccm.py
+modal run --detach \
+  code/03_inter_lake_ccm/modal_inter_lake_ccm.py
 ```
 
-Progress check:
+Check progress:
 
 ```bash
-modal volume ls ccm-data lake_results/final_v3/inter_edges | grep -c json
+modal run \
+  code/03_inter_lake_ccm/modal_inter_lake_ccm.py \
+  --status
 ```
 
-Only after the count reaches exactly 90:
+Merge only after all 90 edges have completed:
 
 ```bash
-modal run code/03_inter_lake_ccm/modal_inter_lake_ccm.py --merge-only
+modal run \
+  code/03_inter_lake_ccm/modal_inter_lake_ccm.py \
+  --merge-only
 ```
 
-Expected Modal Volume outputs:
+Expected Volume outputs:
 
 ```text
 lake_results/final_v3/connectivity_full_pairwise_ccm_results.csv
 lake_results/final_v3/connectivity_connected_vs_unconnected_summary.csv
 ```
 
-### 5. Run Forecasting On Modal
+### 5. Run Forecasting
 
-Use the detached server-side orchestration entry point:
+Submit the server-side forecasting orchestration:
 
 ```bash
-modal run --detach code/04_forecast/modal_forecast_synchrony_filtered.py::detached
+modal run --detach \
+  code/04_forecast/modal_forecast_synchrony_filtered.py::detached
 ```
 
-Expected Modal Volume outputs:
+The command returns after submission. Closing the local terminal does not stop
+the server-side Modal job.
+
+Expected Volume outputs:
 
 ```text
 lake_results/final_v3/forecast_synchrony_filtered_full_results.csv
@@ -299,97 +324,150 @@ lake_results/final_v3/forecast_synchrony_filtered_selected_lags.csv
 lake_results/final_v3/xgboost_tuning_results.csv
 ```
 
+## Resuming Interrupted Runs
+
+The within-lake CCM, between-lake CCM and forecasting stages save successful
+shards independently. If a run is interrupted by account limits, preemption,
+terminal closure or a temporary error, rerun the same command in the same
+Modal environment with the same `ccm-data` Volume.
+
+On a resumed run:
+
+- valid completed shards are skipped;
+- missing or failed tasks are submitted again; and
+- final outputs are merged only after every expected shard passes validation.
+
 ## Download Modal Outputs
 
-Create runtime output directories:
+Create the local runtime directories:
 
 ```bash
 mkdir -p lake_pkls results
 ```
 
-Download the ten lake panel pickles:
+Download the ten lake panels:
 
 ```bash
-modal volume get ccm-data lake_results/Kalamalka_Lake_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Okanagan_Lake_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Skaha_Lake_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Vaseux_Lake_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Rainy_Lake_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Lake_of_the_Woods_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Playgreen_Lake_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Kiskitto_Lake_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Sipiwesk_Lake_result.pkl lake_pkls/
-modal volume get ccm-data lake_results/Split_Lake_result.pkl lake_pkls/
+for lake in \
+  Kalamalka_Lake \
+  Okanagan_Lake \
+  Skaha_Lake \
+  Vaseux_Lake \
+  Rainy_Lake \
+  Lake_of_the_Woods \
+  Playgreen_Lake \
+  Kiskitto_Lake \
+  Sipiwesk_Lake \
+  Split_Lake
+do
+  modal volume get \
+    ccm-data \
+    "lake_results/${lake}_result.pkl" \
+    lake_pkls/
+done
 ```
 
-Download analysis outputs:
+Download the embedding parameters:
 
 ```bash
-modal volume get ccm-data lake_results/full_pipeline_v2/embed_params_corrected.json results/
-modal volume get ccm-data lake_results/final_v3/ccm_all_edges_merged_fdr.csv results/
-modal volume get ccm-data lake_results/final_v3/connectivity_full_pairwise_ccm_results.csv results/
-modal volume get ccm-data lake_results/final_v3/connectivity_connected_vs_unconnected_summary.csv results/
-modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_full_results.csv results/
-modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_rolling_results.csv results/
-modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_dm_results.csv results/
-modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_selected_lags.csv results/
-modal volume get ccm-data lake_results/final_v3/xgboost_tuning_results.csv results/
+modal volume get \
+  ccm-data \
+  lake_results/full_pipeline_v2/embed_params_corrected.json \
+  results/
 ```
 
-## Local Post-Processing
+Download the CCM and forecasting outputs:
 
-After the Modal outputs are downloaded, build deterministic tables, figures and
-dataset files locally:
+```bash
+for file in \
+  ccm_all_edges_merged_fdr.csv \
+  connectivity_full_pairwise_ccm_results.csv \
+  connectivity_connected_vs_unconnected_summary.csv \
+  forecast_synchrony_filtered_full_results.csv \
+  forecast_synchrony_filtered_rolling_results.csv \
+  forecast_synchrony_filtered_dm_results.csv \
+  forecast_synchrony_filtered_selected_lags.csv \
+  xgboost_tuning_results.csv
+do
+  modal volume get \
+    ccm-data \
+    "lake_results/final_v3/${file}" \
+    results/
+done
+```
+
+## Build Local Outputs
+
+After downloading the complete Modal outputs, run:
 
 ```bash
 python code/05_postprocess_local/build_outputs.py
 ```
 
-This writes chapter tables to `ch4_tables/`, figures to `results/figures/`,
-appendix files to `appendices/` and the public dataset to `dataset/`.
+This writes:
 
-The report-aligned rendered outputs are:
+```text
+ch4_tables/        chapter tables and validated intermediate tables
+results/figures/   dissertation figures
+appendices/        appendix tables
+dataset/           public derived dataset and data dictionary
+```
+
+The report-aligned outputs are:
 
 - Figures 3.1, 4.1, 4.2, 4.3, 4.4 and B1;
 - Table 4.1;
-- Appendix Tables A1–A2, B1–B5 and C1–C4.
+- Appendix Tables A1–A2, B1–B5 and C1–C4; and
+- the public derived dataset.
 
-Other CSV files in `ch4_tables/` are validated intermediate tables used to
-render these report outputs.
+`figure_4_3_interlake_network.py` renders both Figure 4.3 and Figure 4.4.
 
-Check the downloaded Modal outputs and regenerated local products:
+## Verify Outputs
+
+Run the output checker after local post-processing:
 
 ```bash
 python code/99_check_outputs/check_modal_outputs.py
 ```
 
-## Expected Output Sizes
+The checker verifies that:
 
-| Output | Expected size |
-| --- | ---: |
-| `lake_pkls/*_result.pkl` | 10 files |
-| `results/embed_params_corrected.json` | 10 top-level lakes |
-| `results/ccm_all_edges_merged_fdr.csv` | 420 rows |
-| `results/connectivity_full_pairwise_ccm_results.csv` | 90 rows |
-| `results/connectivity_connected_vs_unconnected_summary.csv` | 2 rows |
-| `results/forecast_synchrony_filtered_full_results.csv` | 122 rows |
-| `results/forecast_synchrony_filtered_rolling_results.csv` | 372 rows |
-| `results/forecast_synchrony_filtered_dm_results.csv` | 341 rows |
-| `results/forecast_synchrony_filtered_selected_lags.csv` | 38 rows |
-| `results/xgboost_tuning_results.csv` | 6 rows |
+- all ten lake panels are present;
+- the embedding parameters cover ten lakes and seven variables;
+- the within-lake CCM output contains the 420 expected unique edges, all with
+  `status=OK`;
+- the between-lake CCM output contains the 90 expected unique edges, all with
+  `status=OK`;
+- every forecasting output has the required columns and covers all ten lakes;
+- the rolling-forecast and DM outputs cover the 1-, 3-, 6- and 12-month
+  horizons;
+- the XGBoost tuning output contains six candidates and one selected
+  configuration; and
+- the expected tables, Figures 3.1, 4.1–4.4 and B1, appendices and dataset files
+  were generated.
 
-The forecasting full-results table is expected to contain some method-level
-SARIMAX error rows where exogenous-variable gaps prevent block forecasting. The
-rolling and DM outputs use the valid fitted methods.
+A successful check ends with:
 
-## Reproducibility Notes
+```text
+Output checks passed.
+```
 
-The CCM and forecasting stages use fixed random seeds and Modal images with
-pinned `pyEDM==2.4.0`, `pandas==2.2.2`, `numpy==1.26.4` and `xgboost==3.4.1`.
-The XGBoost version is the version used to reproduce the reported global
-hyperparameter-tuning results.
+The dissertation outputs in `reference/` may be used for additional numerical
+comparison. Forecast row counts are not treated as fixed structural
+requirements because model availability can vary when remote forecasting
+dependencies are rebuilt.
 
-The original Modal run did not preserve a full lock file for `statsmodels` or
-`pmdarima`. SARIMA and SARIMAX metrics are therefore expected to be stable for
-the dissertation conclusions but should not be described as byte-identical
-across future image rebuilds.
+## Runtime and Environment Notes
+
+The full Modal analysis is computationally intensive and may require several
+hours. Runtime depends on account concurrency, queueing and container
+preemption. The 420-edge within-lake CCM stage is normally the longest stage.
+
+The data-generation and CCM images use Python 3.11 with the principal versions
+`pandas==2.2.2`, `numpy==1.26.4` and `pyEDM==2.4.0`. The forecasting image uses
+Python 3.12 and `xgboost==3.4.1`. XGBoost is installed remotely and is not
+required for local post-processing.
+
+The original Modal run did not preserve exact `statsmodels` and `pmdarima`
+versions. Future SARIMA and SARIMAX image rebuilds may therefore produce small
+numerical differences, while retaining the same workflow and output structure.

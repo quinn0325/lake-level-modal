@@ -8,6 +8,7 @@ venv/
 # Runtime outputs downloaded from Modal or regenerated from those downloads.
 /lake_pkls/
 /results/
+/results_repro_final/
 /figures/
 /appendices/
 /dataset/
