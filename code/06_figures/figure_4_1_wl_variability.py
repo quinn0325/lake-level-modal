@@ -1,68 +1,22 @@
-"""Figure 4.1 — 十个研究湖泊的水位变率。
+"""Render Figure 4.1 from cleaned monthly water-level observations.
 
-Local figure rendering only; this script does not run CCM or forecasting.
-仅在本地绘图；本脚本不运行 CCM 或预测分析。
-
-(a) 逐湖时间序列（10 条堆叠条带，1994–2024）
-(b) 逐湖横向箱线图
-
-两个 panel 使用同一条 **centred water level**：
-
-    WL_centered(i,t) = WL(i,t) − mean_t WL(i,t)
-
-即每个湖减去自身长期均值，**不除以标准差、不去季节化**。术语上一律称
-"centred water level"，不称 "anomaly"——后者在本文中专指去除月气候态之后的量。站点基准面差异由此消除、
-各湖围绕 0 显示，而单位仍是米，因此 Sipiwesk 的大幅波动与 Skaha 的小幅波动之间
-是真实差异。数据取自 lake_pkls 的原始多站水位，经与主流程完全相同的异常值筛查与
-多站合成（clean_wide_wl → combine_station_water_levels），再对齐到完整月历，
-真实缺测保留为 NaN。
-
-制图规范
---------
-· 按最终印刷尺寸作图（6.3 in 宽 = A4 双面 2.5 cm 页边距下的正文宽度），
-  字号即为读者看到的字号，不依赖后期缩放。最小字号 8 pt。
-· 配色取 Okabe–Ito 色盲安全调色板的蓝（#0072B2）与朱红（#D55E00）。
-· 两个 panel 共用 y/x 量程以保证跨湖可比；Skaha 与 Vaseux 因此接近平线，
-  这本身即是结果，其量级由 panel (b) 承担。
-· 连续缺测 ≥2 个月的区间以浅灰竖带标出（BAND_GREY），孤立缺测仅表现为断线。
-· 图内不设 legend：颜色与灰带的含义全部由 caption 承担，避免图例压占数据区。
-· 字体嵌入为 TrueType（pdf.fonttype=42），满足投稿要求。
-
-跑法
-----
-    python code/06_figures/figure_4_1_wl_variability.py
-
-输出
-----
-    results/figures/figure_4_1_wl_variability.pdf   （矢量，投稿用）
-    results/figures/figure_4_1_wl_variability.png   （400 dpi，预览用）
-
-正式图注
---------
-Figure 4.1. Temporal and distributional variability of observed monthly lake
-water levels before deseasonalisation. (a) Cleaned monthly water levels
-centred on each lake's long-term mean. All series share the same vertical
-scale, allowing differences in amplitude to be compared directly. Breaks
-indicate missing observations, with grey shading identifying contiguous gaps
-of at least two months. (b) Distributions of the corresponding centred
-monthly water levels. Blue and orange denote lakes in the Okanagan and
-Nelson–Winnipeg systems, respectively.
+Each series is centred on its long-term mean without standardisation or
+deseasonalisation. Gaps of at least two consecutive months are shaded.
 """
 from pathlib import Path
 import pickle
 import sys
-import textwrap
 
 import matplotlib as mpl
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+mpl.use("Agg")
+import matplotlib.pyplot as plt
 
 CODE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE_DIR / "01_analysis_core"))
 import analysis_core as p                                        # noqa: E402
-
-p.log = lambda msg: None
 
 OUT_DIR = Path(__file__).resolve().parents[2] / "results" / "figures"
 PKL_DIR = Path(p.PKL_DIR)
@@ -74,28 +28,13 @@ SYSTEMS = [
 ]
 LAKES = [lk for _, g in SYSTEMS for lk in g]
 SYSTEM_OF = {lk: n for n, g in SYSTEMS for lk in g}
-COLOUR = {"Okanagan": "#0072B2", "Nelson–Winnipeg": "#D55E00"}   # Okabe–Ito palette / Okabe–Ito 配色
+COLOUR = {"Okanagan": "#0072B2", "Nelson–Winnipeg": "#D55E00"}
 LABEL = {lk: lk.replace("_Lake", "").replace("_", " ") for lk in LAKES}
 LABEL["Lake_of_the_Woods"] = "Lake of the Woods"
 
-# Typography assumes full-width placement in the dissertation. / 字号按论文正文全宽排版设置。
 FS_TICK, FS_LABEL, FS_LAKE, FS_TITLE = 10.0, 11.0, 10.5, 12.0
-BAND_GREY = "0.45"      # Missing-period bands / 缺测时段色带
+BAND_GREY = "0.45"
 BAND_ALPHA = 0.07
-FS_CAPTION = 9.0
-
-# Toggle the embedded caption without changing the plotted panels. / 可切换图内说明文字，不改变绘图面板。
-EMBED_CAPTION = False
-CAPTION = (
-    "Figure 4.1. Temporal and distributional variability of observed monthly "
-    "lake water levels before deseasonalisation. (a) Cleaned monthly water "
-    "levels centred on each lake's long-term mean. All series share the same "
-    "vertical scale, allowing differences in amplitude to be compared "
-    "directly. Breaks indicate missing observations, with grey shading "
-    "identifying contiguous gaps of at least two months. (b) Distributions of "
-    "the corresponding centred monthly water levels. Blue and orange denote "
-    "lakes in the Okanagan and Nelson–Winnipeg systems, respectively."
-)
 
 mpl.rcParams.update({
     "font.family": "sans-serif",
@@ -109,16 +48,16 @@ mpl.rcParams.update({
 
 
 def centered_series(lake):
+    """Return one cleaned water-level series centred on its mean."""
     with open(PKL_DIR / f"{lake}_result.pkl", "rb") as fh:
         cached = pickle.load(fh)
-    wl = p.combine_station_water_levels(
-        p.clean_wide_wl(cached["wide_wl"]), method="anomaly_mean")
+    wl = p.combine_station_water_levels(p.clean_wide_wl(cached["wide_wl"]))
     wl = wl.sort_index().asfreq("MS")
     return wl - wl.mean()
 
 
 def gap_spans(s, min_len=2):
-    """返回连续缺测 ≥min_len 个月的区间 [(start, end), ...]。"""
+    """Return spans containing at least min_len consecutive missing months."""
     na = s.isna().values
     out, i, n = [], 0, len(na)
     while i < n:
@@ -139,10 +78,8 @@ def main():
     lim = np.ceil(max(np.nanmax(np.abs(s.values)) for s in data.values()) * 10) / 10
     x0, x1 = pd.Timestamp("1994-01-01"), pd.Timestamp("2025-01-01")
 
-    cap_lines = (textwrap.wrap(CAPTION, width=104) if EMBED_CAPTION else [])
-    cap_in = len(cap_lines) * FS_CAPTION * 1.42 / 72.0        # Caption height / 说明文字高度
-    fig_h = 9.3 + cap_in
-    bottom = (0.50 + cap_in + 0.10) / fig_h if EMBED_CAPTION else 0.50 / fig_h
+    fig_h = 9.3
+    bottom = 0.50 / fig_h
 
     fig = plt.figure(figsize=(6.3, fig_h))
     gs = fig.add_gridspec(2, 1, height_ratios=[10, 3.6], hspace=0.30,
@@ -150,7 +87,6 @@ def main():
                           bottom=bottom)
     gs_a = gs[0].subgridspec(10, 1, hspace=0.0)
 
-    # Panel (a): time series / 面板 (a)：时间序列
     for k, lake in enumerate(LAKES):
         ax = fig.add_subplot(gs_a[k])
         s, colour = data[lake], COLOUR[SYSTEM_OF[lake]]
@@ -177,7 +113,6 @@ def main():
             ax.set_title("(a)  Monthly water levels centred on each lake's "
                          "long-term mean", fontsize=FS_TITLE, loc="left", pad=6,
                          x=-0.245)
-        # Separate the two lake systems. / 分隔两个湖泊水系。
         if lake == "Rainy_Lake":
             ax.spines["top"].set_visible(True)
             ax.spines["top"].set_linewidth(1.1)
@@ -185,7 +120,6 @@ def main():
     fig.text(0.058, (pa_top + pa_bot) / 2, "Centred water level (m)",
              rotation=90, va="center", ha="center", fontsize=FS_LABEL)
 
-    # Panel (b): distributions / 面板 (b)：分布
     axb = fig.add_subplot(gs[1])
     order = LAKES[::-1]
     _mpl_ver = tuple(int(v) for v in mpl.__version__.split(".")[:2])
@@ -212,28 +146,12 @@ def main():
     for sp in ("top", "right"):
         axb.spines[sp].set_visible(False)
 
-    if cap_lines:
-        fig.text(0.045, 0.10 / fig_h, "\n".join(cap_lines), fontsize=FS_CAPTION,
-                 va="bottom", ha="left", linespacing=1.42, color="0.15")
-
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for path, dpi in ((OUT_DIR / "figure_4_1_wl_variability.pdf", 300),
                       (OUT_DIR / "figure_4_1_wl_variability.png", 400)):
         fig.savefig(path, dpi=dpi)
-        print(f"wrote {path}")
+        print(f"Wrote {path}")
     plt.close(fig)
-
-    summary = pd.DataFrame({
-        "lake": [LABEL[lk] for lk in LAKES],
-        "system": [SYSTEM_OF[lk] for lk in LAKES],
-        "n_obs": [int(data[lk].notna().sum()) for lk in LAKES],
-        "n_missing": [int(data[lk].isna().sum()) for lk in LAKES],
-        "sd_m": [round(float(data[lk].std()), 3) for lk in LAKES],
-        "iqr_m": [round(float(data[lk].quantile(.75) - data[lk].quantile(.25)), 3)
-                  for lk in LAKES],
-        "range_m": [round(float(data[lk].max() - data[lk].min()), 3) for lk in LAKES],
-    })
-    print("\n" + summary.to_string(index=False))
 
 
 if __name__ == "__main__":

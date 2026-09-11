@@ -59,7 +59,8 @@ modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_full
 modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_rolling_results.csv results/
 modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_dm_results.csv results/
 modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_selected_lags.csv results/
+modal volume get ccm-data lake_results/final_v3/xgboost_tuning_results.csv results/
 
-python code/06_postprocess_local/build_outputs.py
+python code/05_postprocess_local/build_outputs.py
 python code/99_check_outputs/check_modal_outputs.py
 ```

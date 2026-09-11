@@ -1,25 +1,8 @@
-"""生成全部附录表（附录A/B/C），输出 CSV（完整精度）与 Markdown（排版用）。
+"""Build appendix CSV and Markdown files from downloaded Modal results."""
 
-Local table rendering only; this script does not rerun CCM or forecasting.
-仅在本地生成表格；本脚本不重新运行 CCM 或预测分析。
+from __future__ import annotations
 
-分类与正文的方法学结构对应：
-    附录A  数据与数据可用性        ← §3.1–3.2、§4.1
-    附录B  CCM 分析                ← §3.3、§4.2–4.3
-    附录C  预测分析                ← §3.4、§4.4
-
-数据源全部来自 2026-08-31 重跑：lake_pkls、results/、ch4_tables/。
-本脚本不做任何再计算的建模，只从已有结果汇总；A2/A3 的统计量与
-figure_4_1_wl_variability.py 使用同一条清洗后水位序列，两处必然一致。
-
-跑法
-----
-    python code/07_tables/build_appendices.py
-
-输出
-----
-    final/appendices/<表号>_<名称>.csv / .md
-"""
+import json
 import pickle
 import sys
 from pathlib import Path
@@ -27,332 +10,575 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+
 CODE = Path(__file__).resolve().parents[1]
+ROOT = CODE.parent
+sys.path.insert(0, str(CODE))
 sys.path.insert(0, str(CODE / "01_analysis_core"))
-import analysis_core as p                                       # noqa: E402
 
-p.log = lambda msg: None
+from config import LAKES, VARIABLES  # noqa: E402
+import analysis_core as analysis  # noqa: E402
 
-ROOT = CODE.parent                       # Repository root / 仓库根目录
-TAB = ROOT / "ch4_tables"
-OUT = ROOT / "appendices"
-PKL = Path(p.PKL_DIR)
+
+TABLE_DIR = ROOT / "ch4_tables"
+OUTPUT_DIR = ROOT / "appendices"
+PANEL_DIR = Path(analysis.PKL_DIR)
 
 SYSTEMS = [
-    ("Okanagan", ["Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake", "Vaseux_Lake"]),
-    ("Nelson–Winnipeg", ["Rainy_Lake", "Lake_of_the_Woods", "Playgreen_Lake",
-                         "Kiskitto_Lake", "Sipiwesk_Lake", "Split_Lake"]),
+    ("Okanagan", LAKES[:4]),
+    ("Nelson–Winnipeg", LAKES[4:]),
 ]
-LAKES = [lk for _, g in SYSTEMS for lk in g]
-SYSTEM_OF = {lk: n for n, g in SYSTEMS for lk in g}
-LABEL = {lk: lk.replace("_Lake", "").replace("_", " ") for lk in LAKES}
-LABEL["Lake_of_the_Woods"] = "Lake of the Woods"
+SYSTEM_OF = {lake: system for system, lakes in SYSTEMS for lake in lakes}
+DISPLAY_NAME = {lake: lake.replace("_Lake", "").replace("_", " ") for lake in LAKES}
+DISPLAY_NAME["Lake_of_the_Woods"] = "Lake of the Woods"
 
-# Regulation metadata matches the Modal panel stage. / 调控信息与 Modal 面板阶段一致。
-REGFLOW_STATIONS = {
-    "Kalamalka_Lake": ["08NM065"], "Okanagan_Lake": ["08NM050"],
-    "Skaha_Lake": ["08NM002"], "Vaseux_Lake": ["08NM247"],
-    "Rainy_Lake": ["05PC019"], "Lake_of_the_Woods": ["05PE011", "05PE006"],
-    "Playgreen_Lake": ["05UB009"], "Kiskitto_Lake": ["05UB009"],
-    "Sipiwesk_Lake": ["05UE005"], "Split_Lake": ["05UF006"],
+REGULATION_STATIONS = {
+    "Kalamalka_Lake": ["08NM065"],
+    "Okanagan_Lake": ["08NM050"],
+    "Skaha_Lake": ["08NM002"],
+    "Vaseux_Lake": ["08NM247"],
+    "Rainy_Lake": ["05PC019"],
+    "Lake_of_the_Woods": ["05PE011", "05PE006"],
+    "Playgreen_Lake": ["05UB009"],
+    "Kiskitto_Lake": ["05UB009"],
+    "Sipiwesk_Lake": ["05UE005"],
+    "Split_Lake": ["05UF006"],
 }
-REGFLOW_SUBPERIOD = {"Vaseux_Lake": "2012–2024"}
-REGFLOW_NOTE = {
-    "Lake_of_the_Woods": "两站流量相加（Norman Dam + Kenora Powerhouse）",
-    "Playgreen_Lake": "与 Kiskitto 共用 Jenpeg 大坝出流",
-    "Kiskitto_Lake": "与 Playgreen 共用 Jenpeg 大坝出流",
-    "Sipiwesk_Lake": "无自有坝，以下游 Kelsey 发电站出流代理",
-    "Vaseux_Lake": "测流站 2012 年始测，序列受限于该子区间",
+REGULATION_PERIOD = {"Vaseux_Lake": "2012–2024"}
+VARIABLE_ORDER = ["RegFlow", "R", "P", "Evap", "SWE", "T", "WL"]
+NO_EXOGENOUS = {"Persistence", "SARIMA", "XGBoost_AR_only"}
+METHOD_ORDER = [
+    "Persistence",
+    "SARIMA",
+    "SARIMAX_all_vars",
+    "SARIMAX_Stepwise",
+    "SARIMAX_CCM_direct",
+    "SARIMAX_CCM_ancestors",
+    "SARIMAX_CCM_neighbor",
+    "XGBoost_AR_only",
+    "XGBoost_all_vars",
+    "XGBoost_Stepwise",
+    "XGBoost_CCM_direct",
+    "XGBoost_CCM_ancestors",
+    "XGBoost_CCM_neighbor",
+]
+
+COLUMN_DECIMALS = {
+    "coverage_pct": 1,
+    "cv_rmse_m": 5,
+    "learning_rate": 2,
+    "p_value": 4,
+    "p_fdr": 4,
+    "kendall_p": 4,
+    "dm_stat": 3,
+    "S_ij": 3,
 }
 
-VAR_ORDER = ["RegFlow", "R", "P", "Evap", "SWE", "T", "WL"]
+
+def require_columns(frame, required, label):
+    """Reject an input table that lacks required columns."""
+    missing = sorted(set(required) - set(frame.columns))
+    if missing:
+        raise ValueError(f"{label} is missing columns: {', '.join(missing)}")
 
 
-# Column-specific decimal places. / 按列指定小数位。
-COL_DECIMALS = {"coverage_pct": 1, "cv_rmse_m": 5, "learning_rate": 2, "cv_rmse_m": 5, "learning_rate": 2, "p_value": 4, "p_fdr": 4, "kendall_p": 4,
-                "dm_stat": 3, "S_ij": 3}
+def as_bool(series):
+    """Normalize a stored Boolean column."""
+    if pd.api.types.is_bool_dtype(series):
+        return series
+    return series.astype(str).str.strip().str.lower().isin({"true", "1", "yes"})
 
 
-def _fmt(v, nd):
-    if v is None or (isinstance(v, float) and pd.isna(v)):
+def format_cell(value, decimals):
+    """Format one value for a Markdown table."""
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
         return ""
-    if isinstance(v, bool):
-        return "是" if v else "否"
-    if isinstance(v, (int, np.integer)):
-        return str(int(v))
-    if isinstance(v, (float, np.floating)):
-        return f"{v:.{nd}f}" if abs(v) >= 1e-4 or v == 0 else f"{v:.2e}"
-    return str(v)
+    if isinstance(value, (bool, np.bool_)):
+        return "yes" if value else "no"
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)):
+        if abs(value) >= 1e-4 or value == 0:
+            return f"{value:.{decimals}f}"
+        return f"{value:.2e}"
+    return str(value)
 
 
-def to_md(df, nd=3):
-    """自己渲染 Markdown 表，避免依赖 tabulate。数值列右对齐。"""
-    cols = list(df.columns)
-    num = [c for c in cols
-           if pd.api.types.is_numeric_dtype(df[c]) and df[c].dtype != bool]
-    head = "| " + " | ".join(cols) + " |"
-    rule = "| " + " | ".join("---:" if c in num else "---" for c in cols) + " |"
-    dec = [COL_DECIMALS.get(c, nd) for c in cols]
-    body = ["| " + " | ".join(_fmt(v, d) for v, d in zip(row, dec)) + " |"
-            for row in df.itertuples(index=False)]
-    return "\n".join([head, rule] + body)
+def to_markdown(frame, default_decimals=3):
+    """Render a Markdown table without requiring tabulate."""
+    columns = list(frame.columns)
+    numeric = {
+        column
+        for column in columns
+        if pd.api.types.is_numeric_dtype(frame[column]) and frame[column].dtype != bool
+    }
+    decimals = [COLUMN_DECIMALS.get(column, default_decimals) for column in columns]
+    header = "| " + " | ".join(columns) + " |"
+    rule = "| " + " | ".join(
+        "---:" if column in numeric else "---" for column in columns
+    ) + " |"
+    rows = [
+        "| "
+        + " | ".join(
+            format_cell(value, nd) for value, nd in zip(row, decimals)
+        )
+        + " |"
+        for row in frame.itertuples(index=False)
+    ]
+    return "\n".join([header, rule, *rows])
 
 
-def write(df, stem, title, note="", float_fmt=None, max_md_rows=None):
-    OUT.mkdir(parents=True, exist_ok=True)
-    df.to_csv(OUT / f"{stem}.csv", index=False)
-    nd = 0 if float_fmt == ".0f" else (2 if float_fmt == ".2f" else 3)
-    body = df if max_md_rows is None else df.head(max_md_rows)
-    md = to_md(body, nd)
-    head = f"**{title}**"
+def write_table(frame, stem, title, note="", default_decimals=3):
+    """Write one appendix table as CSV and Markdown."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(OUTPUT_DIR / f"{stem}.csv", index=False)
+    markdown = to_markdown(frame, default_decimals)
+    text = f"**{title}**"
     if note:
-        head += f"\n\n{note}"
-    if max_md_rows is not None and len(df) > max_md_rows:
-        md += f"\n\n（共 {len(df)} 行，完整内容见 {stem}.csv）"
-    (OUT / f"{stem}.md").write_text(head + "\n\n" + md + "\n")
-    print(f"  {stem:<34} {len(df):>4} 行")
+        text += f"\n\n{note}"
+    (OUTPUT_DIR / f"{stem}.md").write_text(
+        text + "\n\n" + markdown + "\n",
+        encoding="utf-8",
+    )
+    print(f"  {stem:<34} {len(frame):>4} rows")
 
 
-def cleaned_wl(lake):
-    with open(PKL / f"{lake}_result.pkl", "rb") as fh:
-        cached = pickle.load(fh)
-    wl = p.combine_station_water_levels(
-        p.clean_wide_wl(cached["wide_wl"]), method="anomaly_mean")
-    return wl.sort_index().asfreq("MS"), cached
+def cleaned_water_level(lake):
+    """Return the cleaned monthly lake-level series and its stored inputs."""
+    with (PANEL_DIR / f"{lake}_result.pkl").open("rb") as handle:
+        cached = pickle.load(handle)
+    cleaned = analysis.clean_wide_wl(cached["wide_wl"])
+    level = analysis.combine_station_water_levels(cleaned)
+    return level.sort_index().asfreq("MS"), cached
 
 
-def longest_gap(s):
-    mx = cur = 0
-    for v in s.isna():
-        cur = cur + 1 if v else 0
-        mx = max(mx, cur)
-    return mx
+def longest_gap(series):
+    """Return the longest run of missing values."""
+    longest = current = 0
+    for missing in series.isna():
+        current = current + 1 if missing else 0
+        longest = max(longest, current)
+    return longest
 
 
-# Appendix A / 附录 A
-def appendix_a():
-    print("附录A 数据与数据可用性")
-    rows_a1, rows_a2, rows_a3 = [], [], []
-    for lk in LAKES:
-        wl, cached = cleaned_wl(lk)
+def build_appendix_a():
+    """Build study-sample and water-level data tables."""
+    if set(REGULATION_STATIONS) != set(LAKES):
+        raise ValueError("Regulated-flow station metadata does not match config.LAKES")
+    print("Appendix A: data and data availability")
+    sample_rows = []
+    availability_rows = []
+    outlier_rows = []
+
+    for lake in LAKES:
+        level, cached = cleaned_water_level(lake)
         raw = cached["wide_wl"]
-        rows_a1.append({
-            "lake": LABEL[lk], "system": SYSTEM_OF[lk],
+        sample_rows.append({
+            "lake": DISPLAY_NAME[lake],
+            "basin": SYSTEM_OF[lake],
             "hydrolakes_id": cached.get("hylak_id"),
             "n_wl_stations": raw.shape[1],
             "wl_stations": ", ".join(raw.columns),
-            "regflow_stations": ", ".join(REGFLOW_STATIONS[lk]),
-            "regflow_period": REGFLOW_SUBPERIOD.get(lk, "1994–2024"),
-            "note": REGFLOW_NOTE.get(lk, ""),
+            "regflow_stations": ", ".join(REGULATION_STATIONS[lake]),
+            "regflow_period": REGULATION_PERIOD.get(lake, "1994–2024"),
         })
-        wl_c = wl - wl.mean()
-        rows_a2.append({
-            "lake": LABEL[lk], "system": SYSTEM_OF[lk],
-            "n_months": len(wl), "n_observed": int(wl.notna().sum()),
-            "n_missing": int(wl.isna().sum()),
-            "coverage_pct": round(100 * wl.notna().mean(), 1),
-            "longest_gap_months": longest_gap(wl),
-            "sd_m": round(float(wl_c.std()), 3),
-            "iqr_m": round(float(wl_c.quantile(.75) - wl_c.quantile(.25)), 3),
-            "range_m": round(float(wl_c.max() - wl_c.min()), 3),
+
+        centred = level - level.mean()
+        availability_rows.append({
+            "lake": DISPLAY_NAME[lake],
+            "basin": SYSTEM_OF[lake],
+            "n_months": len(level),
+            "n_observed": int(level.notna().sum()),
+            "n_missing": int(level.isna().sum()),
+            "coverage_pct": round(100 * level.notna().mean(), 1),
+            "longest_gap_months": longest_gap(level),
+            "sd_m": round(float(centred.std()), 3),
+            "iqr_m": round(float(centred.quantile(0.75) - centred.quantile(0.25)), 3),
+            "range_m": round(float(centred.max() - centred.min()), 3),
         })
-        for col in raw.columns:
-            for d in p.wl_station_outliers(raw[col]):
-                rows_a3.append({"lake": LABEL[lk], "station": col,
-                                "month": str(d.date())[:7],
-                                "value_m": round(float(raw.loc[d, col]), 3)})
 
-    write(pd.DataFrame(rows_a1), "A1_lakes_and_stations",
-          "表A1　研究湖泊、水位站与调控出流站",
-          "水位站与调控站编号为 Water Survey of Canada（HYDAT）站号；"
-          "hydrolakes_id 为 HydroLAKES 的 Hylak_id。")
-    write(pd.DataFrame(rows_a2), "A2_data_availability",
-          "表A2　逐湖水位数据可用性与变率",
-          "n_months 为 1994-01 至 2024-12 的月份总数；coverage_pct 为非缺失"
-          "月份占比；longest_gap_months 为最长连续缺失月数。sd_m、iqr_m 与 "
-          "range_m 在各湖去均值（中心化）后计算，单位为米。")
-    write(pd.DataFrame(rows_a3), "A3_flagged_outliers",
-          "表A3　两级稳健筛查标记为缺失的水位观测",
-          "判据：月度变化量稳健 z > 6，且该月水位数值自身稳健 z > 5。"
-          "标记点置为缺失，原值不作修正。")
+        for station in raw.columns:
+            for month in analysis.wl_station_outliers(raw[station]):
+                outlier_rows.append({
+                    "lake": DISPLAY_NAME[lake],
+                    "station": station,
+                    "month": str(month.date())[:7],
+                    "value_m": round(float(raw.loc[month, station]), 3),
+                })
 
-
-# Appendix B / 附录 B
-def appendix_b():
-    print("附录B CCM 分析")
-    import json
-    emb = json.load(open(ROOT / "results" / "embed_params_corrected.json"))
-    # tau is fixed at 1, so the matrix shows E only. / tau 恒为 1，矩阵仅展示 E。
-    m = pd.DataFrame({v: {LABEL[lk]: emb.get(lk, {}).get(v, {}).get("E")
-                          for lk in LAKES} for v in VAR_ORDER})
-    m = m.reindex([LABEL[lk] for lk in LAKES]).reset_index(names="lake")
-    write(m, "B1_embedding_parameters",
-          "表B1　逐湖逐变量的嵌入维数 E",
-          "E 由训练期一步 simplex 自预测在 2–10 中选定；嵌入延迟 τ 对全部湖泊"
-          "与变量固定为 1。", float_fmt=".0f")
-
-    b3 = pd.read_csv(TAB / "TC1_supported_drivers.csv")
-    write(b3, "B2_supported_drivers",
-          "表B2　通过筛选的 24 条 driver → WL 关系",
-          "同时满足 BH-FDR（α = 0.05，检验族为 420 条湖内边）与收敛诊断。")
-
-    t6 = pd.read_csv(TAB / "T6_between_lake_edges.csv")
-    s6 = t6[t6.statistically_significant]
-    s6o = s6.assign(cause_lake=s6.cause_lake.map(LABEL),
-                    effect_lake=s6.effect_lake.map(LABEL))[
-        ["cause_lake", "effect_lake", "obs_rho", "obs_lag", "obs_n", "p_fdr",
-         "kendall_tau", "lag_resolution", "causal_evidence",
-         "waterway_connected", "tier"]].sort_values(
-        ["tier", "obs_rho"], ascending=[True, False])
-    write(s6o, "B3_supported_between_lake_edges",
-          "表B3　通过筛选的 26 条湖间关系",
-          "检验族为 45 个湖泊对的双向共 90 条候选边，其中 26 条同时满足 "
-          "BH-FDR 与收敛诊断。"
-          "tier 为写作阶段引入的事后描述性水文距离分组。", max_md_rows=26)
-
-    t7 = pd.read_csv(TAB / "T7_lake_pair_strength.csv")
-    t7o = t7.copy()
-    t7o["pair"] = t7o.pair.map(lambda x: " – ".join(LABEL[y] for y in x.split("|")))
-    write(t7o[["pair", "S_ij", "detected", "directly_connected", "tier"]],
-          "B4_lake_pair_strength",
-          "表B4　45 个湖泊对的 CCM 强度与水文连通性",
-          "S_ij 为该对两个方向 |ρ| 的均值；detected 表示任一方向满足 FDR 显著、"
-          "收敛且最优滞后 d ≥ 0。本表为 Mann–Whitney 检验的全部输入。",
-          max_md_rows=45)
+    write_table(
+        pd.DataFrame(sample_rows),
+        "A1_lakes_and_stations",
+        "Table A1. Study lakes, water-level gauges and regulated-outflow gauges",
+        "Gauge identifiers are Water Survey of Canada station numbers; "
+        "hydrolakes_id is the HydroLAKES Hylak_id.",
+    )
+    write_table(
+        pd.DataFrame(outlier_rows),
+        "A2_flagged_outliers",
+        "Table A2. Water level observations set to missing by the two-stage "
+        "robust screen",
+        "A point is removed when the robust z-score exceeds 6 for its monthly "
+        "change and 5 for its level. Recorded values are not adjusted.",
+    )
+    return pd.DataFrame(availability_rows)
 
 
+def build_appendix_b(availability):
+    """Build embedding and CCM appendix tables."""
+    print("Appendix B: CCM analysis")
+    embedding = json.loads(
+        (ROOT / "results" / "embed_params_corrected.json").read_text(encoding="utf-8")
+    )
+    if set(embedding) != set(LAKES):
+        raise ValueError("Embedding parameters must contain exactly the ten study lakes")
+    if set(VARIABLE_ORDER) != set(VARIABLES):
+        raise ValueError("Appendix variable order does not match config.VARIABLES")
+    missing_embeddings = [
+        f"{lake}/{variable}"
+        for lake in LAKES
+        for variable in VARIABLES
+        if embedding.get(lake, {}).get(variable, {}).get("E") is None
+    ]
+    if missing_embeddings:
+        raise ValueError(
+            "Missing embedding dimensions: " + ", ".join(missing_embeddings)
+        )
+    matrix = pd.DataFrame({
+        variable: {
+            DISPLAY_NAME[lake]: embedding.get(lake, {}).get(variable, {}).get("E")
+            for lake in LAKES
+        }
+        for variable in VARIABLE_ORDER
+    })
+    matrix = matrix.reindex([DISPLAY_NAME[lake] for lake in LAKES])
+    matrix = matrix.reset_index(names="lake")
+    write_table(
+        matrix,
+        "B1_embedding_parameters",
+        "Table B1. Embedding dimension E by lake and variable",
+        "E is selected from 2–10 by one-step Simplex self-prediction on the "
+        "training period; embedding delay tau is fixed at 1.",
+        default_decimals=0,
+    )
 
-# Appendix C / 附录 C
-def appendix_c():
-    print("附录C 预测分析")
-    s = pd.read_csv(ROOT / "results" / "forecast_synchrony_filtered_selected_lags.csv")
-    s = s.assign(lake=s.lake.map(LABEL))[["lake", "method", "selected_vars",
-                                          "selected_lags"]]
-    write(s, "C1_selected_predictors",
-          "表C1　各湖各策略实际进入模型的外生变量与预测域滞后",
-          "滞后为预测域重新求得的值（下界 1 个月）；因果域最优滞后 d = 0 的边"
-          "在此重新扫描。CCM_neighbor 行只列出相对 CCM_ancestors 新增的湖间"
-          "水位项，该策略的完整变量集为同一湖的 CCM_ancestors 行加本行。"
-          "All-vars 不单列：它包含全部通过数据可用性筛查的候选变量，滞后由"
-          "滞后互相关（式 17）确定；本研究中唯一被长缺口规则剔除的是 Vaseux "
-          "的 RegFlow（该站 2012 年始测），因此除 Vaseux 为 5 个变量外，"
-          "其余各湖均为 6 个。")
+    drivers = pd.read_csv(TABLE_DIR / "supported_drivers.csv")
+    write_table(
+        availability,
+        "B2_data_availability",
+        "Table B2. Water level data availability and variability by lake",
+        "coverage_pct is the percentage of months with an observation; "
+        "longest_gap_months is the longest consecutive gap. Variability is "
+        "calculated after centring each lake on its mean, in metres.",
+    )
 
-    t4 = pd.read_csv(TAB / "T4_single_split_full.csv")
-    NO_EXOG = {"Persistence", "SARIMA", "XGBoost_AR_only"}
+    write_table(
+        drivers,
+        "B3_supported_drivers",
+        f"Table B3. The {len(drivers)} supported driver-to-water-level relationships",
+        "Relationships pass both Benjamini–Hochberg FDR control at alpha = "
+        "0.05 within the 420-edge family and the convergence diagnostic.",
+    )
 
-    def cell(r):
-        if pd.notna(r.status):
-            return "失败"
-        if isinstance(r.arima_order, str):
-            return f"{r.arima_order}{r.arima_seasonal_order}".replace(" ", "")
-        return "无外生" if r.method in NO_EXOG else f"{int(r.n_selected_vars)}"
+    between = pd.read_csv(TABLE_DIR / "T6_between_lake_edges.csv")
+    require_columns(
+        between,
+        {
+            "cause_lake",
+            "effect_lake",
+            "statistically_significant",
+            "obs_rho",
+            "obs_lag",
+        },
+        "Between-lake table",
+    )
+    identities = set(
+        between[["cause_lake", "effect_lake"]].itertuples(index=False, name=None)
+    )
+    expected_identities = {
+        (cause, effect)
+        for cause in LAKES
+        for effect in LAKES
+        if cause != effect
+    }
+    if len(between) != 90 or identities != expected_identities:
+        raise ValueError("Between-lake table must contain exactly 90 directed edges")
+    supported = between[as_bool(between.statistically_significant)].copy()
+    supported["cause_lake"] = supported.cause_lake.map(DISPLAY_NAME)
+    supported["effect_lake"] = supported.effect_lake.map(DISPLAY_NAME)
+    supported = supported[
+        [
+            "cause_lake",
+            "effect_lake",
+            "obs_rho",
+            "obs_lag",
+            "obs_n",
+            "p_fdr",
+            "kendall_tau",
+            "lag_resolution",
+            "causal_evidence",
+            "waterway_connected",
+            "tier",
+        ]
+    ].sort_values(["tier", "obs_rho"], ascending=[True, False])
+    write_table(
+        supported,
+        "B4_supported_between_lake_edges",
+        f"Table B4. The {len(supported)} supported between-lake relationships",
+        "The family contains 90 directed edges from 45 lake pairs. Supported "
+        "edges pass both FDR control and the convergence diagnostic. Tier is "
+        "a post-hoc descriptive grouping by hydrological separation.",
+    )
 
-    t4["cell"] = t4.apply(cell, axis=1)
-    mt = t4.pivot_table(index="lake", columns="method", values="cell",
-                        aggfunc="first").reindex([lk for lk in LAKES])
-    mt = mt[[c for c in ["Persistence", "SARIMA", "SARIMAX_all_vars",
-                         "SARIMAX_Stepwise", "SARIMAX_CCM_direct",
-                         "SARIMAX_CCM_ancestors", "SARIMAX_CCM_neighbor",
-                         "XGBoost_AR_only", "XGBoost_all_vars",
-                         "XGBoost_Stepwise", "XGBoost_CCM_direct",
-                         "XGBoost_CCM_ancestors", "XGBoost_CCM_neighbor"]
-             if c in mt.columns]]
-    mt = mt.fillna("不适用")
-    mt.index = [LABEL[lk] for lk in mt.index]
-    write(mt.reset_index(names="lake"), "C2_model_configurations",
-          "表C2　各湖各方法的模型配置与拟合结果",
-          "SARIMA(X) 单元格为 (p,d,q)(P,D,Q,12) 阶数，XGBoost 单元格为入模外生"
-          "变量数。「不适用」指该湖没有对应的 CCM 关系可用（共 8 个组合，"
-          "均出现在无支持关系的 Skaha 与无邻居关系的 Kiskitto）；「失败」指"
-          "拟合时测试期外生变量缺口超过 6 个月（共 29 个组合）。"
-          "13 种配置 × 10 湖中 122 个进入拟合、93 个产出有效滚动预测。")
-
-    # Fixed global XGBoost parameters from training-only tuning. / 仅用训练期调优得到的固定全局 XGBoost 参数。
-    grid = pd.DataFrame([
-        {"max_depth": 2, "learning_rate": 0.05, "n_estimators": 200,
-         "cv_rmse_m": 0.15547, "selected": True},
-        {"max_depth": 3, "learning_rate": 0.05, "n_estimators": 200,
-         "cv_rmse_m": 0.15933, "selected": False},
-        {"max_depth": 3, "learning_rate": 0.10, "n_estimators": 100,
-         "cv_rmse_m": 0.15871, "selected": False},
-        {"max_depth": 4, "learning_rate": 0.05, "n_estimators": 300,
-         "cv_rmse_m": 0.16096, "selected": False},
-        {"max_depth": 3, "learning_rate": 0.03, "n_estimators": 400,
-         "cv_rmse_m": 0.15958, "selected": False},
-        {"max_depth": 5, "learning_rate": 0.05, "n_estimators": 200,
-         "cv_rmse_m": 0.16270, "selected": False},
-    ])
-    write(grid, "C3_xgboost_hyperparameters",
-          "表C3　XGBoost 超参数候选网格与交叉验证结果",
-          "固定 subsample = 0.8、colsample_bytree = 0.8、random_state = 0；在 10 "
-          "个湖泊的训练期内以 3 折扩展窗口交叉验证（共 30 折，仅使用 AR-only "
-          "特征）比较平均 RMSE，选出一组供所有湖泊与全部策略共用。选中 "
-          "max_depth = 2、learning_rate = 0.05、n_estimators = 200，"
-          "平均 CV RMSE = 0.155 m。", float_fmt=".2f")
+    pair_strength = pd.read_csv(TABLE_DIR / "T7_lake_pair_strength.csv")
+    if len(pair_strength) != 45 or pair_strength.pair.nunique() != 45:
+        raise ValueError("Lake-pair strength table must contain exactly 45 pairs")
+    pair_strength["pair"] = pair_strength.pair.map(
+        lambda value: " – ".join(DISPLAY_NAME[lake] for lake in value.split("|"))
+    )
+    pair_strength = pair_strength[
+        ["pair", "S_ij", "detected", "directly_connected", "tier"]
+    ]
+    write_table(
+        pair_strength,
+        "B5_lake_pair_strength",
+        f"Table B5. CCM strength and hydrological connectivity for all "
+        f"{len(pair_strength)} lake pairs",
+        "S_ij is the mean absolute cross-map skill over both directions. A pair "
+        "is detected when either direction is FDR-significant, convergent and "
+        "has an optimal lag of at least zero months.",
+    )
 
 
-    t3 = pd.read_csv(TAB / "T3_dm_bh.csv")
-    ok = t3[t3.p_value.notna()]
+def model_configuration_cell(row):
+    """Format one fitted-model configuration for Table C2."""
+    if pd.notna(row.status):
+        return "failed"
+    if isinstance(row.arima_order, str):
+        return f"{row.arima_order}{row.arima_seasonal_order}".replace(" ", "")
+    if row.method in NO_EXOGENOUS:
+        return "no exogenous"
+    return str(int(row.n_selected_vars))
+
+
+def build_appendix_c():
+    """Build forecasting appendix tables."""
+    print("Appendix C: forecasting analysis")
+    selected = pd.read_csv(
+        ROOT / "results" / "forecast_synchrony_filtered_selected_lags.csv"
+    )
+    require_columns(
+        selected,
+        {"lake", "method", "selected_vars", "selected_lags"},
+        "Selected-predictor table",
+    )
+    selected["lake"] = selected.lake.map(DISPLAY_NAME)
+    selected = selected[["lake", "method", "selected_vars", "selected_lags"]]
+    write_table(
+        selected,
+        "C1_selected_predictors",
+        "Table C1. Exogenous predictors and forecast-domain lags by model",
+        "Lags are re-optimised in the forecast domain with a lower bound of one "
+        "month. CCM-neighbour rows contain only the between-lake terms added to "
+        "the corresponding CCM-ancestors predictor set.",
+    )
+
+    full = pd.read_csv(TABLE_DIR / "T4_single_split_full.csv")
+    require_columns(
+        full,
+        {
+            "lake",
+            "method",
+            "status",
+            "arima_order",
+            "arima_seasonal_order",
+            "n_selected_vars",
+        },
+        "Forecast full-results table",
+    )
+    if set(full.lake) - set(LAKES) or set(full.method) - set(METHOD_ORDER):
+        raise ValueError("Forecast full-results table contains unexpected identities")
+    full["cell"] = full.apply(model_configuration_cell, axis=1)
+    configurations = full.pivot_table(
+        index="lake",
+        columns="method",
+        values="cell",
+        aggfunc="first",
+    ).reindex(LAKES)
+    configurations = configurations[
+        [method for method in METHOD_ORDER if method in configurations.columns]
+    ]
+    configurations = configurations.fillna("not applicable")
+    configurations.index = [DISPLAY_NAME[lake] for lake in configurations.index]
+    n_expected = len(LAKES) * len(METHOD_ORDER)
+    n_fitted = len(full)
+    n_failed = int(full.status.notna().sum())
+    write_table(
+        configurations.reset_index(names="lake"),
+        "C2_model_configurations",
+        "Table C2. Model configuration and fitting outcome by lake and method",
+        "SARIMA(X) cells give model orders and XGBoost cells give the number of "
+        f"exogenous predictors. Of {n_expected} possible lake-method "
+        f"combinations, {n_fitted} entered fitting, {n_failed} failed and "
+        f"{n_fitted - n_failed} produced valid forecasts.",
+    )
+
+    tuning = pd.read_csv(ROOT / "results" / "xgboost_tuning_results.csv")
+    require_columns(
+        tuning,
+        {
+            "max_depth",
+            "learning_rate",
+            "n_estimators",
+            "cv_rmse_m",
+            "selected",
+            "n_lakes",
+            "n_cv_folds",
+        },
+        "XGBoost tuning table",
+    )
+    tuning["selected"] = as_bool(tuning.selected)
+    expected_grid = {
+        (row["max_depth"], row["learning_rate"], row["n_estimators"])
+        for row in analysis.XGB_PARAM_GRID
+    }
+    actual_grid = set(
+        tuning[["max_depth", "learning_rate", "n_estimators"]].itertuples(
+            index=False,
+            name=None,
+        )
+    )
+    if len(tuning) != len(expected_grid) or actual_grid != expected_grid:
+        raise ValueError("XGBoost tuning table does not match the configured grid")
+    if int(tuning.selected.sum()) != 1:
+        raise ValueError("XGBoost tuning table must select exactly one configuration")
+    tuning["cv_rmse_m"] = tuning.cv_rmse_m.round(5)
+    write_table(
+        tuning,
+        "C3_xgboost_hyperparameters",
+        "Table C3. XGBoost hyperparameter grid and cross-validation results",
+        "Subsample = 0.8, colsample_bytree = 0.8 and random_state = 0 were fixed. "
+        "The table reports the training-only expanding-window cross-validation "
+        "results saved by the Modal forecasting stage.",
+    )
+
+    dm = pd.read_csv(TABLE_DIR / "T3_dm_bh.csv")
+    require_columns(
+        dm,
+        {"lake", "method_1", "method_2", "p_value", "sig_fdr", "winner"},
+        "Diebold–Mariano table",
+    )
+    usable = dm[dm.p_value.notna()]
+    usable = usable.copy()
+    usable["sig_fdr"] = as_bool(usable.sig_fdr)
     rows = []
-    for (m1, m2), g in ok.groupby(["method_1", "method_2"]):
-        sig = g[g.sig_fdr]
-        rows.append({"method_1": m1, "method_2": m2,
-                     "n_lakes": g.lake.nunique(), "n_tested": len(g),
-                     "n_significant": len(sig),
-                     "n_favouring_method_1": int((sig.winner == m1).sum()),
-                     "n_favouring_method_2": int((sig.winner == m2).sum())})
-    write(pd.DataFrame(rows), "C4_dm_summary",
-          "表C4　Diebold–Mariano 检验结果汇总",
-          "14 组预先设定的方法对，逐湖逐时距共 341 项检验，其中 333 项返回可用"
-          "统计量，BH 校正在这 333 项上一次性施加，42 项在校正后仍显著。"
-          "", float_fmt=".0f")
+    for (method_1, method_2), group in usable.groupby(["method_1", "method_2"]):
+        significant = group[group.sig_fdr]
+        rows.append({
+            "method_1": method_1,
+            "method_2": method_2,
+            "n_lakes": group.lake.nunique(),
+            "n_tested": len(group),
+            "n_significant": len(significant),
+            "n_favouring_method_1": int((significant.winner == method_1).sum()),
+            "n_favouring_method_2": int((significant.winner == method_2).sum()),
+        })
+    summary = pd.DataFrame(rows)
+    write_table(
+        summary,
+        "C4_dm_summary",
+        "Table C4. Summary of Diebold–Mariano tests",
+        f"The input contains {len(dm)} comparisons, of which {len(usable)} "
+        f"returned a usable statistic and {int(usable.sig_fdr.sum())} remained "
+        "significant after Benjamini–Hochberg correction.",
+        default_decimals=0,
+    )
 
 
-# Combined Markdown output for document assembly. / 合并 Markdown 供文档排版。
 SECTIONS = [
-    ("附录A　数据与数据可用性",
-     ["A1_lakes_and_stations", "A2_data_availability",
-      "A3_flagged_outliers"]),
-    ("附录B　CCM 分析",
-     ["B1_embedding_parameters", "B2_supported_drivers",
-      "B3_supported_between_lake_edges", "B4_lake_pair_strength"]),
-    ("附录C　预测分析",
-     ["C1_selected_predictors", "C2_model_configurations",
-      "C3_xgboost_hyperparameters", "C4_dm_summary"]),
+    (
+        "Appendix A. Data and data availability",
+        ["A1_lakes_and_stations", "A2_flagged_outliers"],
+    ),
+    (
+        "Appendix B. CCM analysis",
+        [
+            "B1_embedding_parameters",
+            "B2_data_availability",
+            "B3_supported_drivers",
+            "B4_supported_between_lake_edges",
+            "B5_lake_pair_strength",
+        ],
+    ),
+    (
+        "Appendix C. Forecasting analysis",
+        [
+            "C1_selected_predictors",
+            "C2_model_configurations",
+            "C3_xgboost_hyperparameters",
+            "C4_dm_summary",
+        ],
+    ),
 ]
 
 
-def combine():
-    parts = ["# 附录", "",
-             "本附录内容来自 2026-08-31 重跑结果，由 "
-             "`code/07_tables/build_appendices.py` 自动生成。分类与第三章方法学"
-             "结构对应：附录A 对应 §3.1–3.2 数据，附录B 对应 §3.3 CCM 分析，"
-             "附录C 对应 §3.4 预测分析。", ""]
+def combine_markdown():
+    """Combine the individual Markdown tables into one appendix document."""
+    edges = pd.read_csv(TABLE_DIR / "T5_within_lake_edges.csv")
+    require_columns(
+        edges,
+        {"lake", "cause", "effect", "statistically_significant", "obs_lag"},
+        "Within-lake table",
+    )
+    if len(edges) != 420:
+        raise ValueError("Within-lake table must contain exactly 420 directed edges")
+    supported = edges[as_bool(edges.statistically_significant)]
+    n_positive = int((supported.obs_lag > 0).sum())
+    n_zero = int((supported.obs_lag == 0).sum())
+    n_negative = int((supported.obs_lag < 0).sum())
+
+    parts = [
+        "# Appendices",
+        "",
+        "These appendix files are generated from the downloaded Modal results.",
+        "",
+    ]
     for title, stems in SECTIONS:
-        parts += [f"## {title}", ""]
-        if title.startswith("附录B"):
-            parts += ["### 图B1　420 条湖内候选关系的支持情况总览", "",
-                      "行为 42 种有向变量对（按原因变量分为七块），列为 10 个湖。"
-                      "着色格子表示该关系同时通过 BH-FDR 与收敛诊断，颜色深浅为 "
-                      "cross-map skill ρ，格内数字为最优时滞 d（月，正号省略）；"
-                      "橙色方块标记 d = 0，灰色三角标记 d < 0；右侧条形为该关系"
-                      "获得支持的湖泊数。420 个检验中 212 个获得支持"
-                      "（正滞后 150、同期 23、负滞后 39）。",
-                      "", "*（插入 figure_B1_within_lake_network.pdf）*", ""]
+        parts.extend([f"## {title}", ""])
+        if title.startswith("Appendix B"):
+            parts.extend([
+                "### Figure B1. Support across all within-lake candidate relationships",
+                "",
+                f"Of the {len(edges)} candidate edges, {len(supported)} were "
+                f"supported ({n_positive} with a positive lag, {n_zero} "
+                f"contemporaneous and {n_negative} with a negative lag).",
+                "",
+                "See `results/figures/figure_B1_within_lake_network.pdf`.",
+                "",
+            ])
         for stem in stems:
-            txt = (OUT / f"{stem}.md").read_text().strip().split("\n")
-            parts += [f"### {txt[0].strip('*')}", "",
-                      "\n".join(txt[1:]).strip(), ""]
-    path = OUT / "全部附录.md"
-    path.write_text("\n".join(parts) + "\n")
-    n = sum(1 for l in path.read_text().split("\n") if l.startswith("|"))
-    print(f"\n合并输出 {path}（表格行 {n}）")
+            lines = (OUTPUT_DIR / f"{stem}.md").read_text(
+                encoding="utf-8"
+            ).strip().split("\n")
+            parts.extend([
+                f"### {lines[0].strip('*')}",
+                "",
+                "\n".join(lines[1:]).strip(),
+                "",
+            ])
+
+    path = OUTPUT_DIR / "Appendices.md"
+    path.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    print(f"\nWrote {path}")
+
+
+def main():
+    availability = build_appendix_a()
+    build_appendix_b(availability)
+    build_appendix_c()
+    combine_markdown()
+    print(f"All appendix files written to {OUTPUT_DIR}")
 
 
 if __name__ == "__main__":
-    appendix_a()
-    appendix_b()
-    appendix_c()
-    combine()
-    print(f"全部输出至 {OUT}")
+    main()

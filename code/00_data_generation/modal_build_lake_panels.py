@@ -1,4 +1,5 @@
 """Build monthly lake panels from WSC and ERA5-Land data on Modal.
+
 """
 import modal
 

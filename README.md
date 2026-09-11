@@ -25,6 +25,11 @@ The workflow combines four components:
 The main outputs are the lake-level analysis tables, figures, appendices and
 public derived dataset used to support the dissertation results.
 
+The standalone [technical appendix](TECHNICAL_APPENDIX.md) summarises the data,
+analytical procedures, fixed parameters, execution route and verification
+criteria. The compact [Modal command sheet](MODAL_REPRODUCTION.md) contains the
+complete copy-and-paste command sequence.
+
 ## Reproduction Scope
 
 This repository provides one official reproduction route:
@@ -53,8 +58,8 @@ code/
   02_within_lake_ccm/       Modal stage for 420 within-lake CCM edges
   03_inter_lake_ccm/        Modal stage for 90 between-lake CCM edges
   04_forecast/              Modal stage for the forecasting experiment
-  06_figures/               local post-processing from downloaded CSV outputs
-  06_postprocess_local/     one local entry point for post-processing
+  05_postprocess_local/     one local entry point for post-processing
+  06_figures/               local figure rendering from downloaded outputs
   07_tables/                local deterministic table builders
   08_dataset/               local dataset builder from downloaded lake PKLs
   99_check_outputs/         checks downloaded Modal outputs
@@ -62,6 +67,7 @@ reference/
   results/                  committed reference CSV/JSON outputs
   lake_pkls/                committed reference panel pickles
   figures/                  committed reference figures and map cache layers
+  tables/                   committed reference main-text table
   appendices/               committed reference appendix CSVs
   dataset/                  committed reference public dataset
 ```
@@ -81,7 +87,7 @@ the Modal outputs are downloaded.
 
 ## Environment
 
-Use Python 3.11, matching the Modal images:
+Use Python 3.11 for the local command-line environment and post-processing:
 
 ```bash
 python3.11 -m venv .venv
@@ -89,6 +95,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 modal setup
 ```
+
+Each Modal stage defines its own remote environment. The data-generation and
+CCM images use Python 3.11. The forecasting image uses Python 3.12 because the
+reported tuning results were reproduced with `xgboost==3.4.1`, which requires
+Python 3.12. XGBoost is installed in that remote image and is not required for
+local post-processing.
 
 ## Quick Local Verification With Reference Outputs
 
@@ -101,7 +113,7 @@ mkdir -p lake_pkls results
 cp reference/lake_pkls/*.pkl lake_pkls/
 cp reference/results/* results/
 
-python code/06_postprocess_local/build_outputs.py
+python code/05_postprocess_local/build_outputs.py
 python code/99_check_outputs/check_modal_outputs.py
 ```
 
@@ -163,7 +175,7 @@ of multi-outlet and proxy-station cases. The reproduction route starts from
 these fixed assignments; it does not repeat nationwide candidate-lake
 screening. The assignments and observed-data coverage are documented in
 `reference/appendices/A1_lakes_and_stations.csv` and
-`reference/appendices/A2_data_availability.csv`.
+`reference/appendices/B2_data_availability.csv`.
 
 ## Modal Setup
 
@@ -284,6 +296,7 @@ lake_results/final_v3/forecast_synchrony_filtered_full_results.csv
 lake_results/final_v3/forecast_synchrony_filtered_rolling_results.csv
 lake_results/final_v3/forecast_synchrony_filtered_dm_results.csv
 lake_results/final_v3/forecast_synchrony_filtered_selected_lags.csv
+lake_results/final_v3/xgboost_tuning_results.csv
 ```
 
 ## Download Modal Outputs
@@ -320,6 +333,7 @@ modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_full
 modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_rolling_results.csv results/
 modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_dm_results.csv results/
 modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_selected_lags.csv results/
+modal volume get ccm-data lake_results/final_v3/xgboost_tuning_results.csv results/
 ```
 
 ## Local Post-Processing
@@ -328,11 +342,20 @@ After the Modal outputs are downloaded, build deterministic tables, figures and
 dataset files locally:
 
 ```bash
-python code/06_postprocess_local/build_outputs.py
+python code/05_postprocess_local/build_outputs.py
 ```
 
 This writes chapter tables to `ch4_tables/`, figures to `results/figures/`,
 appendix files to `appendices/` and the public dataset to `dataset/`.
+
+The report-aligned rendered outputs are:
+
+- Figures 3.1, 4.1, 4.2, 4.3, 4.4 and B1;
+- Table 4.1;
+- Appendix Tables A1–A2, B1–B5 and C1–C4.
+
+Other CSV files in `ch4_tables/` are validated intermediate tables used to
+render these report outputs.
 
 Check the downloaded Modal outputs and regenerated local products:
 
@@ -353,6 +376,7 @@ python code/99_check_outputs/check_modal_outputs.py
 | `results/forecast_synchrony_filtered_rolling_results.csv` | 372 rows |
 | `results/forecast_synchrony_filtered_dm_results.csv` | 341 rows |
 | `results/forecast_synchrony_filtered_selected_lags.csv` | 38 rows |
+| `results/xgboost_tuning_results.csv` | 6 rows |
 
 The forecasting full-results table is expected to contain some method-level
 SARIMAX error rows where exogenous-variable gaps prevent block forecasting. The
@@ -360,10 +384,12 @@ rolling and DM outputs use the valid fitted methods.
 
 ## Reproducibility Notes
 
-The CCM stages use fixed surrogate seeds and Modal images with pinned
-`pyEDM==2.4.0`, `pandas==2.2.2` and `numpy==1.26.4`.
+The CCM and forecasting stages use fixed random seeds and Modal images with
+pinned `pyEDM==2.4.0`, `pandas==2.2.2`, `numpy==1.26.4` and `xgboost==3.4.1`.
+The XGBoost version is the version used to reproduce the reported global
+hyperparameter-tuning results.
 
-The original Modal run did not preserve a full lock file for `xgboost`,
-`statsmodels` or `pmdarima`. Forecast metrics are therefore expected to be
-stable for the dissertation conclusions but should not be described as
-byte-identical across future image rebuilds.
+The original Modal run did not preserve a full lock file for `statsmodels` or
+`pmdarima`. SARIMA and SARIMAX metrics are therefore expected to be stable for
+the dissertation conclusions but should not be described as byte-identical
+across future image rebuilds.

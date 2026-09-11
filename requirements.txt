@@ -7,10 +7,6 @@ statsmodels
 pmdarima
 networkx
 
-# The original run did not preserve the XGBoost version. See README.md for
-# the resulting reproduction tolerance.
-xgboost
-
 # Local figures and maps.
 matplotlib
 geopandas

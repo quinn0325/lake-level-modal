@@ -1,4 +1,4 @@
-lake,system,n_months,n_observed,n_missing,coverage_pct,longest_gap_months,sd_m,iqr_m,range_m
+lake,basin,n_months,n_observed,n_missing,coverage_pct,longest_gap_months,sd_m,iqr_m,range_m
 Kalamalka,Okanagan,372,368,4,98.9,2,0.198,0.211,1.339
 Okanagan,Okanagan,372,372,0,100.0,0,0.293,0.363,1.895
 Skaha,Okanagan,372,365,7,98.1,3,0.058,0.085,0.292

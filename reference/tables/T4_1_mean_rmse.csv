@@ -1,0 +1,13 @@
+model_family,n_lakes,configuration,rmse_h1,rmse_h3,rmse_h6,rmse_h12
+SARIMA(X),3,No exogenous,0.07,0.109,0.13,0.14
+SARIMA(X),3,All vars,0.067,0.104,0.121,0.128
+SARIMA(X),3,Stepwise,0.068,0.105,0.124,0.127
+SARIMA(X),3,CCM direct,0.069,0.113,0.138,0.144
+SARIMA(X),3,CCM ancestors,0.068,0.11,0.133,0.141
+SARIMA(X),3,Persistence,0.075,0.124,0.154,0.152
+XGBoost,9,AR-only,0.195,0.366,0.49,0.33
+XGBoost,9,All vars,0.198,0.308,0.357,0.257
+XGBoost,9,Stepwise,0.194,0.293,0.338,0.211
+XGBoost,9,CCM direct,0.192,0.31,0.365,0.248
+XGBoost,9,CCM ancestors,0.19,0.303,0.359,0.26
+XGBoost,9,Persistence,0.18,0.412,0.607,0.62

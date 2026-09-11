@@ -1,46 +1,24 @@
-"""Figure 4.3 — 湖间因果结构与水文连通性（RQ2）。
+"""Render Figures 4.3 and 4.4 from the complete between-lake CCM results.
 
-Local rendering from downloaded results; this script does not rerun CCM.
-仅在本地读取已下载结果并绘图；本脚本不重新运行 CCM。
 
-(a) 湖间关系网络：10 个湖按两个水系分区排布。
-    浅灰粗线 = 7 条已知直接水道连接（先验的物理连通信息）；
-    彩色箭头 = 22 条通过 BH-FDR（α = 0.05，检验族 = 90 条湖间候选边）
-    与收敛诊断、且最优时滞 d > 0 的有向关系，箭头指向被影响的湖，
-    线宽与颜色深浅同时编码 cross-map skill ρ；
-    浅灰虚线 = 另外 4 条支持关系（3 条 d = 0、1 条 d < 0），
-    时序方向未定或与假设方向相反，故不与主箭头同等呈现。
-
-(b) 湖泊对强度 S_ij 按水文距离分组的分布（箱线图 + 抖动散点）。
-    S_ij 为该湖泊对两个方向 |ρ| 的均值，见
-    modal_inter_lake_ccm.py 中 pair_df 的聚合口径。
-    正文的正式推断只有「direct vs all other pairs」一项 Mann–Whitney
-    检验（两侧，与代码 alternative="two-sided" 一致），四分组仅为描述性
-    深化，图上以括注标明哪三组被合并进 "other pairs"。
-
-约定
-----
-· d > 0 表示原因领先效应，与 analysis_core 一致。
-· 数据源 ch4_tables/T6_between_lake_edges.csv（90 条有向边）与
-  T7_lake_pair_strength.csv（45 个湖泊对），均出自 2026-08-31 重跑。
-· tier 字段为第四章写作阶段引入的事后水文距离分组，分析代码中不存在，
-  因此只作描述性使用。
-
-输出
-----
-    results/figures/figure_4_3_interlake_network.pdf / .png
 """
 from pathlib import Path
+import sys
 
 import matplotlib as mpl
+mpl.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 import matplotlib.patheffects as pe
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+from scipy.stats import mannwhitneyu
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "code"))
+from config import LAKES, WATERWAY_CONNECTED_PAIRS                 # noqa: E402
+
 TAB_DIR = ROOT / "ch4_tables"
 OUT_DIR = ROOT / "results" / "figures"
 
@@ -56,7 +34,6 @@ POS = {"Kalamalka_Lake": (0.085, 0.86), "Okanagan_Lake": (0.255, 0.63),
        "Playgreen_Lake": (0.585, 0.58), "Kiskitto_Lake": (0.925, 0.55),
        "Sipiwesk_Lake": (0.665, 0.30), "Split_Lake": (0.915, 0.17)}
 
-# Offset crowded labels from arrows. / 将拥挤标签移离箭头。
 LABEL_OFF = {"Kalamalka_Lake": (0.0, 0.052, "center", "bottom"),
              "Okanagan_Lake": (0.0, -0.055, "center", "top"),
              "Skaha_Lake": (0.0, -0.055, "center", "top"),
@@ -68,11 +45,6 @@ LABEL_OFF = {"Kalamalka_Lake": (0.0, 0.052, "center", "bottom"),
              "Sipiwesk_Lake": (-0.024, 0.0, "right", "center"),
              "Split_Lake": (0.0, -0.055, "center", "top")}
 
-WATERWAYS = [("Kalamalka_Lake", "Okanagan_Lake"), ("Okanagan_Lake", "Skaha_Lake"),
-             ("Skaha_Lake", "Vaseux_Lake"), ("Playgreen_Lake", "Sipiwesk_Lake"),
-             ("Sipiwesk_Lake", "Split_Lake"), ("Rainy_Lake", "Lake_of_the_Woods"),
-             ("Kiskitto_Lake", "Sipiwesk_Lake")]
-
 TIERS = ["1_direct", "2_same_subsystem_indirect",
          "3_same_basin_diff_subsystem", "4_different_basin"]
 TIER_LABEL = {"1_direct": "Direct connection",
@@ -80,21 +52,18 @@ TIER_LABEL = {"1_direct": "Direct connection",
               "3_same_basin_diff_subsystem": "Same basin, other subsystem",
               "4_different_basin": "Different basin"}
 
-# Colour and width scales preserve weak retained edges in print. / 色彩与线宽范围确保较弱保留边在印刷中可见。
 CMAP = LinearSegmentedColormap.from_list(
     "rho", ["#9CC3E0", "#6BAED6", "#3C8DC4", "#2171B5", "#08306B"])
-NORM = Normalize(vmin=0.15, vmax=1.0)          # Matches Figure 4.2 / 与图 4.2 一致
-RHO_LO, RHO_HI = 0.35, 0.95                    # Width mapping / 线宽映射范围
+NORM = Normalize(vmin=0.15, vmax=1.0)
+RHO_LO, RHO_HI = 0.35, 0.95
 
-# Long-distance edges are lighter but remain visible. / 远距离边较浅，但仍保持可见。
 TIER_EMPH = {"1_direct": (1.00, 1.00), "2_same_subsystem_indirect": (0.95, 0.92),
              "3_same_basin_diff_subsystem": (0.84, 0.84),
              "4_different_basin": (0.72, 0.76)}
-WATERWAY_GREY = "0.76"      # Distinguish waterways from CCM edges. / 区分物理水道与 CCM 边。
+WATERWAY_GREY = "0.76"
 
-# Typography assumes full-width placement in the dissertation. / 字号按论文正文全宽排版设置。
 FS_TICK, FS_LAB, FS_TITLE, FS_NODE, FS_LEG = 10.0, 11.0, 12.0, 9.5, 10.0
-FS_ANN = 9.0                    # Panel (b) test annotation / 面板 (b) 检验标注
+FS_ANN = 9.0
 LEFT, RIGHT = 0.235, 0.972
 
 mpl.rcParams.update({
@@ -108,8 +77,70 @@ mpl.rcParams.update({
 })
 
 
+def load_inputs():
+    """Validate and return the 90 directed edges and 45 lake-pair summaries."""
+    edges = pd.read_csv(TAB_DIR / "T6_between_lake_edges.csv")
+    edge_columns = {
+        "cause_lake", "effect_lake", "status", "obs_lag", "obs_rho", "tier",
+        "convergence_diagnostic_pass", "statistically_significant",
+    }
+    missing = edge_columns - set(edges.columns)
+    if missing:
+        raise ValueError(f"Missing between-lake columns: {sorted(missing)}")
+
+    expected_edges = {
+        (cause, effect)
+        for cause in LAKES
+        for effect in LAKES
+        if cause != effect
+    }
+    actual_edges = set(edges[["cause_lake", "effect_lake"]].itertuples(
+        index=False, name=None))
+    if len(edges) != 90 or actual_edges != expected_edges:
+        raise ValueError(
+            f"Expected exactly 90 between-lake edges; found {len(edges)} rows "
+            f"and {len(actual_edges)} unique edges")
+    if not edges["status"].eq("OK").all():
+        raise ValueError("Between-lake input contains non-OK results")
+    if not set(edges["tier"]).issubset(TIERS):
+        raise ValueError("Between-lake input contains an unknown tier")
+
+    supported = edges[edges["statistically_significant"]].copy()
+    if not supported["convergence_diagnostic_pass"].all():
+        raise ValueError("A supported edge failed the convergence diagnostic")
+    if not np.isfinite(supported[["obs_lag", "obs_rho"]].to_numpy()).all():
+        raise ValueError("Supported edges contain invalid lag or skill values")
+
+    pairs = pd.read_csv(TAB_DIR / "T7_lake_pair_strength.csv")
+    pair_columns = {"pair", "S_ij", "tier", "directly_connected"}
+    missing = pair_columns - set(pairs.columns)
+    if missing:
+        raise ValueError(f"Missing lake-pair columns: {sorted(missing)}")
+
+    expected_pairs = {
+        "|".join(sorted((first, second)))
+        for index, first in enumerate(LAKES)
+        for second in LAKES[index + 1:]
+    }
+    actual_pairs = set(pairs["pair"])
+    if len(pairs) != 45 or actual_pairs != expected_pairs:
+        raise ValueError(
+            f"Expected exactly 45 lake pairs; found {len(pairs)} rows "
+            f"and {len(actual_pairs)} unique pairs")
+    if not set(pairs["tier"]).issubset(TIERS):
+        raise ValueError("Lake-pair input contains an unknown tier")
+    if not np.isfinite(pairs["S_ij"]).all() or not pairs["S_ij"].between(0, 1).all():
+        raise ValueError("Lake-pair strengths must be finite values from zero to one")
+
+    direct_pairs = {"|".join(sorted(pair)) for pair in WATERWAY_CONNECTED_PAIRS}
+    reported_direct = set(pairs.loc[pairs["directly_connected"], "pair"])
+    if reported_direct != direct_pairs:
+        raise ValueError("Directly connected lake pairs do not match config.py")
+    return supported, pairs
+
+
 def edge_lw(rho):
-    """最细的边也要有 1.5 pt，否则印刷后与背景难以分辨。"""
+    """Map cross-map skill to a visible printed line width."""
     f = np.clip((rho - RHO_LO) / (RHO_HI - RHO_LO), 0, 1)
     return 1.5 + 3.0 * f
 
@@ -127,20 +158,19 @@ def draw_network(ax, sup):
         ax.text((x0 + x1) / 2, 0.985, name, ha="center", va="center",
                 fontsize=FS_LEG + 0.2, color="0.35")
 
-    for a, b in WATERWAYS:                       # Known waterways beneath CCM edges. / 已知水道置于 CCM 边下层。
+    for a, b in WATERWAY_CONNECTED_PAIRS:
         (xa, ya), (xb, yb) = POS[a], POS[b]
         ax.plot([xa, xb], [ya, yb], color=WATERWAY_GREY, lw=6.0, zorder=1,
                 solid_capstyle="round")
 
     weak = sup[sup.obs_lag <= 0]
-    for r in weak.itertuples():                  # d<=0 as dashed lines without arrows. / d<=0 使用无箭头虚线。
+    for r in weak.itertuples():
         (xa, ya), (xb, yb) = POS[r.cause_lake], POS[r.effect_lake]
         ax.add_patch(FancyArrowPatch((xa, ya), (xb, yb), arrowstyle="-",
                                      connectionstyle="arc3,rad=0.16",
                                      color="0.42", lw=1.3, ls=(0, (3.5, 2)),
                                      shrinkA=10, shrinkB=10, zorder=2))
 
-    # Draw distant edges first. / 先绘制远距离边。
     pos = sup[sup.obs_lag > 0].copy()
     pos["ord_key"] = pos.tier.map({t: i for i, t in enumerate(TIERS[::-1])})
     for r in pos.sort_values(["ord_key", "obs_rho"]).itertuples():
@@ -195,7 +225,10 @@ def draw_strength(axb, t7):
     data = [t7.loc[t7.tier == t, "S_ij"].values for t in TIERS]
     ypos = range(1, len(TIERS) + 1)
 
-    bp = axb.boxplot(data, orientation="horizontal", widths=0.52, whis=1.5,
+    mpl_version = tuple(int(value) for value in mpl.__version__.split(".")[:2])
+    orientation = ({"orientation": "horizontal"} if mpl_version >= (3, 11)
+                   else {"vert": False})
+    bp = axb.boxplot(data, **orientation, widths=0.52, whis=1.5,
                      showfliers=False, patch_artist=True,
                      medianprops=dict(color="black", lw=1.3),
                      whiskerprops=dict(lw=0.8), capprops=dict(lw=0.8))
@@ -217,66 +250,54 @@ def draw_strength(axb, t7):
     for sp in ("top", "right", "left"):
         axb.spines[sp].set_visible(False)
 
-    # Formal test compares direct pairs with all others. / 正式检验比较直接连接湖泊对与其他湖泊对。
+    direct = t7.loc[t7["directly_connected"], "S_ij"].to_numpy()
+    other = t7.loc[~t7["directly_connected"], "S_ij"].to_numpy()
+    test = mannwhitneyu(direct, other, alternative="two-sided", method="exact")
+    auc = test.statistic / (len(direct) * len(other))
     axb.text(0.0, -0.34, "Pre-specified test, direct vs all other pairs:",
              fontsize=FS_ANN, ha="left", va="center", color="0.20")
-    axb.text(0.0, 0.02, "Mann–Whitney $U$ = 201, $p$ = 0.032, AUC = 0.756",
+    axb.text(0.0, 0.02,
+             f"Mann–Whitney $U$ = {test.statistic:.0f}, "
+             f"$p$ = {test.pvalue:.3f}, AUC = {auc:.3f}",
              fontsize=FS_ANN, ha="left", va="center", color="0.20")
     xb = 1.035
     axb.plot([xb, xb + 0.022, xb + 0.022, xb], [1.62, 1.62, 4.38, 4.38],
              color="0.45", lw=0.8, clip_on=False)
-    axb.text(xb + 0.052, 3.00, "pooled as \"other pairs\" ($n$ = 38)",
+    axb.text(xb + 0.052, 3.00,
+             f"pooled as \"other pairs\" ($n$ = {len(other)})",
              rotation=90, ha="center", va="center", fontsize=8.5, color="0.35",
              clip_on=False)
 
 
+def save(fig, stem):
+    """Save one figure in the publication and preview formats."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    for extension, options in (
+        ("svg", {}),
+        ("pdf", {"dpi": 300}),
+        ("png", {"dpi": 400}),
+        ("tiff", {"dpi": 600}),
+    ):
+        path = OUT_DIR / f"{stem}.{extension}"
+        fig.savefig(path, bbox_inches="tight", **options)
+        print(f"Wrote {path}")
+    plt.close(fig)
+
+
 def main():
-    t6 = pd.read_csv(TAB_DIR / "T6_between_lake_edges.csv")
-    t7 = pd.read_csv(TAB_DIR / "T7_lake_pair_strength.csv")
-    sup = t6[t6.statistically_significant].copy()
+    supported, pairs = load_inputs()
 
-    def save(fig, stem):
-        OUT_DIR.mkdir(parents=True, exist_ok=True)
-        for ext, kw in (("svg", {}), ("pdf", dict(dpi=300)),
-                        ("png", dict(dpi=400)), ("tiff", dict(dpi=600))):
-            path = OUT_DIR / f"{stem}.{ext}"
-            fig.savefig(path, bbox_inches="tight", **kw)
-            print(f"wrote {path}")
-        plt.close(fig)
-
-    # Render the network separately for clearer spacing. / 网络图单独输出以增加节点间距。
     fig = plt.figure(figsize=(6.3, 6.4))
     gs = fig.add_gridspec(2, 1, height_ratios=[10.0, 1.9], hspace=0.0,
                           left=0.020, right=0.992, top=0.988, bottom=0.030)
-    draw_network(fig.add_subplot(gs[0]), sup)
+    draw_network(fig.add_subplot(gs[0]), supported)
     draw_key(fig.add_subplot(gs[1]))
     save(fig, "figure_4_3_interlake_network")
 
     fig = plt.figure(figsize=(6.3, 3.25))
     ax = fig.add_axes([0.335, 0.185, 0.525, 0.760])
-    draw_strength(ax, t7)
-    save(fig, "figure_4_3_pair_strength")
-
-    # Numerical checks / 数值核对
-    print(f"\nbetween-lake edges tested : {len(t6)}")
-    print(f"  supported               : {len(sup)}")
-    cls = sup.obs_lag.map(lambda d: "pos" if d > 0 else ("zero" if d == 0 else "neg"))
-    print("  temporal class          : "
-          + ", ".join(f"{k}={v}" for k, v in
-                      cls.value_counts().reindex(["pos", "zero", "neg"]).items()))
-    p = sup[sup.obs_lag > 0]
-    print(f"  d>0 median rho          : {p.obs_rho.median():.3f}")
-    print(f"  d>0 median lag          : {p.obs_lag.median()}  "
-          f"(range {int(p.obs_lag.min())}-{int(p.obs_lag.max())}, "
-          f"{int(p.obs_lag.between(1, 3).sum())}/{len(p)} in 1-3)")
-    print(f"  d>0 on a direct waterway: {int(p.waterway_connected.sum())} of {len(p)}")
-    print("\npair strength by tier:")
-    print(t7.groupby("tier").agg(n=("S_ij", "size"), median_S=("S_ij", "median"),
-                                 occurrence=("detected", "mean")).round(4).to_string())
-    print("\ndirect vs other:")
-    print(t7.groupby("directly_connected").agg(
-        n=("S_ij", "size"), median_S=("S_ij", "median"),
-        occurrence=("detected", "mean")).round(4).to_string())
+    draw_strength(ax, pairs)
+    save(fig, "figure_4_4_pair_strength")
 
 
 if __name__ == "__main__":

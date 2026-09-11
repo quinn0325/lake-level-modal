@@ -1,19 +1,6 @@
-"""Official Modal stage for the conditional forecasting experiment.
-正式的 Modal 条件预测实验阶段。
+"""Run the conditional forecasting experiment on Modal."""
 
-Shared preprocessing and model functions come from
-``01_analysis_core/analysis_core.py``. This stage defines the experiment-specific
-predictor strategies, evaluates all methods, stores one resumable shard per lake
-and merges only the complete ten-lake result set.
-共享预处理与模型函数来自 ``01_analysis_core/analysis_core.py``。本阶段定义实验专用的
-预测变量策略、评估全部方法、按湖保存可续跑分片，并仅合并完整的十湖结果。
-
-Commands, inputs and expected outputs are listed in the repository README.
-运行命令、输入与预期输出见仓库 README。
-"""
-
-from __future__ import annotations
-
+import itertools
 import json
 import os
 import sys
@@ -21,27 +8,27 @@ from pathlib import Path
 
 import modal
 
-# Modal packages the shared scientific module from code/01_analysis_core/. / Modal 打包分析核心模块。
 _CODE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_CODE_DIR / "01_analysis_core"))
 sys.path.insert(0, str(_CODE_DIR))
 
+from config import LAKES, VARIABLES  # noqa: E402
 
 app = modal.App("forecast-synchrony-filtered")
 
 image = (
-    modal.Image.debian_slim(python_version="3.11")
+    modal.Image.debian_slim(python_version="3.12")
     .pip_install(
         "pandas==2.2.2",
         "numpy==1.26.4",
         "scipy",
         "statsmodels",
         "pmdarima",
-        "xgboost",
+        "xgboost==3.4.1",
         "networkx",
         "pyEDM==2.4.0",
     )
-    # Fix thread counts to reduce controllable run-to-run variation. / 固定线程数，减少可控的运行间差异。
+    # Fixed thread counts reduce controllable run-to-run variation.
     .env({
         "OMP_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1",
@@ -51,22 +38,16 @@ image = (
         "PYTHONHASHSEED": "0",
     })
     .add_local_python_source("analysis_core")
+    .add_local_python_source("config")
 )
 
 volume = modal.Volume.from_name("ccm-data", create_if_missing=False)
 DATA_ROOT = "/data"
-# Output directory shared with the current CCM stages. / 与当前 CCM 阶段共用输出目录。
 OUT_DIR = f"{DATA_ROOT}/lake_results/final_v3"
 EMBED_PARAMS_ABS = f"{DATA_ROOT}/lake_results/full_pipeline_v2/embed_params_corrected.json"
 
 WITHIN_ORIGINAL_INPUT = f"{OUT_DIR}/ccm_all_edges_merged_fdr.csv"
 INTER_ORIGINAL_INPUT = f"{OUT_DIR}/connectivity_full_pairwise_ccm_results.csv"
-
-FORECAST_LAKES = [
-    "Kalamalka_Lake", "Okanagan_Lake", "Skaha_Lake", "Vaseux_Lake",
-    "Rainy_Lake", "Lake_of_the_Woods", "Playgreen_Lake", "Kiskitto_Lake",
-    "Sipiwesk_Lake", "Split_Lake",
-]
 
 OUTPUT_NAMES = {
     "full": "forecast_synchrony_filtered_full_results.csv",
@@ -74,38 +55,156 @@ OUTPUT_NAMES = {
     "dm": "forecast_synchrony_filtered_dm_results.csv",
     "selected": "forecast_synchrony_filtered_selected_lags.csv",
 }
+TUNING_OUTPUT_NAME = "xgboost_tuning_results.csv"
+SHARD_DIR = f"{OUT_DIR}/forecast_shards"
+SHARD_ROW_KEYS = ("full_rows", "rolling_rows", "dm_rows", "selected_rows")
+EXPECTED_SHARDS = frozenset(f"{lake}.json" for lake in LAKES)
+EXPECTED_WITHIN_EDGES = frozenset(
+    (lake, cause, effect)
+    for lake in LAKES
+    for cause in VARIABLES
+    for effect in VARIABLES
+    if cause != effect
+)
+EXPECTED_INTER_EDGES = frozenset(itertools.permutations(LAKES, 2))
 
 
 def _configure_module():
-    """Configure shared analysis paths inside the Modal container.
-    在 Modal 容器中配置共享分析路径。"""
+    """Configure shared analysis paths inside the Modal container."""
     import analysis_core as p
 
     p.PKL_DIR = f"{DATA_ROOT}/lake_results"
-    p.OUT_DIR = OUT_DIR
     os.makedirs(OUT_DIR, exist_ok=True)
-    # Use the authoritative Modal JSON. / 使用 Modal 中的正式参数 JSON。
     p.EMBED_PARAMS_PATH = EMBED_PARAMS_ABS
     return p
 
 
 def _as_bool(value) -> bool:
-    """Normalize stored values to Boolean form.
-    将存储值规范为布尔值。"""
+    """Normalize stored values to Boolean form."""
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"true", "1", "yes"}
 
 
 def _json_dict(values: dict) -> str:
-    """Serialize a lag mapping with stable key order.
-    按稳定键顺序序列化滞后映射。"""
+    """Serialize a lag mapping with stable key order."""
     return json.dumps({str(k): int(v) for k, v in values.items()}, sort_keys=True)
 
 
+def _require_columns(frame, required, label):
+    """Reject an input table that lacks required columns."""
+    missing = sorted(set(required) - set(frame.columns))
+    if missing:
+        raise RuntimeError(f"{label} is missing columns: {', '.join(missing)}")
+
+
+def _load_forecast_inputs(pd):
+    """Validate and load the fixed ten-lake forecasting inputs."""
+    panel_dir = f"{DATA_ROOT}/lake_results"
+    required_files = [EMBED_PARAMS_ABS, WITHIN_ORIGINAL_INPUT, INTER_ORIGINAL_INPUT]
+    required_files.extend(f"{panel_dir}/{lake}_result.pkl" for lake in LAKES)
+    missing_files = [path for path in required_files if not os.path.isfile(path)]
+    if missing_files:
+        raise FileNotFoundError(
+            "Forecasting requires all ten lake panels and the completed CCM outputs. "
+            f"Missing {len(missing_files)} file(s): {', '.join(missing_files)}"
+        )
+
+    with open(EMBED_PARAMS_ABS, encoding="utf-8") as handle:
+        embedding_params = json.load(handle)
+    missing_lakes = sorted(set(LAKES) - set(embedding_params))
+    unexpected_lakes = sorted(set(embedding_params) - set(LAKES))
+    if missing_lakes or unexpected_lakes:
+        raise RuntimeError(
+            "The embedding-parameter JSON must contain exactly the ten study lakes; "
+            f"missing={missing_lakes}, unexpected={unexpected_lakes}"
+        )
+
+    within = pd.read_csv(WITHIN_ORIGINAL_INPUT)
+    _require_columns(
+        within,
+        {
+            "lake", "cause", "effect", "obs_rho", "obs_lag", "p_fdr",
+            "causal_evidence", "status",
+        },
+        "Within-lake CCM input",
+    )
+    within_edges = set(zip(
+        within["lake"].astype(str),
+        within["cause"].astype(str),
+        within["effect"].astype(str),
+    ))
+    if len(within) != len(EXPECTED_WITHIN_EDGES) or within_edges != EXPECTED_WITHIN_EDGES:
+        raise RuntimeError(
+            "Within-lake CCM input must contain exactly the 420 expected directed edges"
+        )
+    if not within["status"].astype(str).eq("OK").all():
+        raise RuntimeError("Within-lake CCM input contains a non-OK row")
+
+    inter = pd.read_csv(INTER_ORIGINAL_INPUT)
+    _require_columns(
+        inter,
+        {
+            "cause_lake", "effect_lake", "obs_rho", "obs_lag", "p_fdr",
+            "causal_evidence", "status",
+        },
+        "Between-lake CCM input",
+    )
+    inter_edges = set(zip(
+        inter["cause_lake"].astype(str),
+        inter["effect_lake"].astype(str),
+    ))
+    if len(inter) != len(EXPECTED_INTER_EDGES) or inter_edges != EXPECTED_INTER_EDGES:
+        raise RuntimeError(
+            "Between-lake CCM input must contain exactly the 90 expected directed edges"
+        )
+    if not inter["status"].astype(str).eq("OK").all():
+        raise RuntimeError("Between-lake CCM input contains a non-OK row")
+
+    return within, inter
+
+
+def _shard_path(lake_name):
+    """Return the Volume path for one lake shard."""
+    return os.path.join(SHARD_DIR, f"{lake_name}.json")
+
+
+def _existing_shards():
+    """Return existing forecasting shard filenames from the Volume."""
+    if not os.path.isdir(SHARD_DIR):
+        return []
+    return sorted(name for name in os.listdir(SHARD_DIR) if name.endswith(".json"))
+
+
+def _validate_lake_shard(lake_name, shard):
+    """Validate the identity and row structure of one lake shard."""
+    if not isinstance(shard, dict) or shard.get("lake") != lake_name:
+        raise RuntimeError(f"Invalid forecasting shard identity for {lake_name}")
+    for key in SHARD_ROW_KEYS:
+        rows = shard.get(key)
+        if not isinstance(rows, list) or not rows:
+            raise RuntimeError(f"Forecasting shard {lake_name} has no valid {key}")
+        for row in rows:
+            if not isinstance(row, dict) or row.get("lake") != lake_name:
+                raise RuntimeError(
+                    f"Forecasting shard {lake_name} contains an invalid row in {key}"
+                )
+
+    full_methods = [row.get("method") for row in shard["full_rows"]]
+    if None in full_methods or len(full_methods) != len(set(full_methods)):
+        raise RuntimeError(f"Forecasting shard {lake_name} has duplicate full-result methods")
+
+
+def _load_lake_shard(lake_name):
+    """Load and validate one existing lake shard."""
+    with open(_shard_path(lake_name), encoding="utf-8") as handle:
+        shard = json.load(handle)
+    _validate_lake_shard(lake_name, shard)
+    return shard
+
+
 def _select_stepwise_lags(panel_train, all_var_lags, wl_col="WL", criterion="aic"):
-    """Select a forward-stepwise subset from the baseline lag pool.
-    从基线滞后池中以前向逐步法选择变量子集。"""
+    """Select a forward-stepwise subset from the baseline lag pool."""
     import pandas as pd
     import statsmodels.api as sm
 
@@ -150,14 +249,12 @@ def _select_stepwise_lags(panel_train, all_var_lags, wl_col="WL", criterion="aic
     return {variable: all_var_lags[variable] for variable in selected}
 
 
-def _filtered_within_edges(pd, input_path=WITHIN_ORIGINAL_INPUT):
-    """Return retained within-lake driver edges for one target lake.
-    返回单个目标湖泊保留的湖内驱动边。"""
-    df = pd.read_csv(input_path)
-    sig = df[df["causal_evidence"].map(_as_bool)].copy()
+def _filtered_within_edges(pd, frame):
+    """Return all retained within-lake edges used by forecasting."""
+    sig = frame[frame["causal_evidence"].map(_as_bool)].copy()
     sig["obs_lag"] = pd.to_numeric(sig["obs_lag"], errors="coerce")
     sig["obs_rho"] = pd.to_numeric(sig["obs_rho"], errors="coerce")
-    # Keep d=0 for later re-selection in the forecast lag range. / 保留 d=0，随后在预测滞后范围内重新选择。
+    # Retain d=0 for re-selection within the forecast-usable lag range.
     sig = sig[sig["obs_lag"].notna() & (sig["obs_lag"] >= 0)].copy()
     return pd.DataFrame(
         {
@@ -172,14 +269,12 @@ def _filtered_within_edges(pd, input_path=WITHIN_ORIGINAL_INPUT):
     )
 
 
-def _filtered_interlake_edges(pd, input_path=INTER_ORIGINAL_INPUT):
-    """Return retained incoming between-lake edges for one target lake.
-    返回指向单个目标湖泊的保留湖间边。"""
-    df = pd.read_csv(input_path)
-    sig = df[df["causal_evidence"].map(_as_bool)].copy()
+def _filtered_interlake_edges(pd, frame):
+    """Return all retained between-lake edges used by forecasting."""
+    sig = frame[frame["causal_evidence"].map(_as_bool)].copy()
     sig["obs_lag"] = pd.to_numeric(sig["obs_lag"], errors="coerce")
     sig["obs_rho"] = pd.to_numeric(sig["obs_rho"], errors="coerce")
-    # Keep d=0 for forecast-constrained lag selection. / 保留 d=0 以便按预测范围重新选择滞后。
+    # Retain d=0 for re-selection within the forecast-usable lag range.
     sig = sig[sig["obs_lag"].notna() & (sig["obs_lag"] >= 0)].copy()
     return pd.DataFrame(
         {
@@ -193,39 +288,14 @@ def _filtered_interlake_edges(pd, input_path=INTER_ORIGINAL_INPUT):
     )
 
 
-def _original_within_direct_lags(pd, lake_name):
-    """Read direct driver lags from retained within-lake edges.
-    从保留的湖内边读取直接驱动滞后。"""
-    df = pd.read_csv(WITHIN_ORIGINAL_INPUT)
-    df["causal_evidence"] = df["causal_evidence"].map(_as_bool)
-    sub = df[(df["lake"] == lake_name) & (df["causal_evidence"]) & (df["effect"] == "WL")]
-    return {str(row["cause"]): int(row["obs_lag"]) for _, row in sub.iterrows()}
-
-
-def _original_neighbor_lags(pd, lake_name):
-    """Read neighbouring-lake lags from retained between-lake edges.
-    从保留的湖间边读取邻湖滞后。"""
-    df = pd.read_csv(INTER_ORIGINAL_INPUT)
-    df["causal_evidence"] = df["causal_evidence"].map(_as_bool)
-    sub = df[(df["effect_lake"] == lake_name) & (df["causal_evidence"])]
-    return {str(row["cause_lake"]): int(row["obs_lag"]) for _, row in sub.iterrows()}
-
-
 def _filter_long_gap_vars(p, panel_deseason, lag_sets, lake_name):
-    """Remove predictors whose training gaps exceed the allowed limit.
-    移除训练期缺口超过上限的预测变量。"""
+    """Remove predictors whose training gaps exceed the allowed limit."""
     selected_cols = set()
     for values in lag_sets.values():
         selected_cols.update(values.keys())
     if not selected_cols:
-        return lag_sets, set()
+        return lag_sets
 
-    p.check_train_gap_warning(
-        panel_deseason,
-        selected_cols,
-        p.FORECAST_HORIZON,
-        log_prefix=f"[{lake_name}] ",
-    )
     long_gap_vars = p.find_long_gap_vars(
         panel_deseason,
         selected_cols,
@@ -233,16 +303,15 @@ def _filter_long_gap_vars(p, panel_deseason, lag_sets, lake_name):
         log_prefix=f"[{lake_name}] ",
     )
     if not long_gap_vars:
-        return lag_sets, set()
+        return lag_sets
     return {
         name: {key: value for key, value in values.items() if key not in long_gap_vars}
         for name, values in lag_sets.items()
-    }, long_gap_vars
+    }
 
 
 def _load_neighbor_series(p, panel_deseason, neighbor_lags, lake_name):
-    """Load, align and gap-filter neighbouring water-level series.
-    读取、对齐并筛除长缺口邻湖水位序列。"""
+    """Load, align, and gap-filter neighbouring water-level series."""
     cols, col_lags, kept = {}, {}, {}
     train_end = -p.FORECAST_HORIZON
     for neighbor_name, lag in neighbor_lags.items():
@@ -252,9 +321,12 @@ def _load_neighbor_series(p, panel_deseason, neighbor_lags, lake_name):
         aligned = neighbor_wl.reindex(panel_deseason.index)
         gap = int(p.longest_consecutive_gap_months(aligned.iloc[:train_end]))
         if gap > p.MAX_FILLABLE_GAP_MONTHS:
-            print(f"[{lake_name}] 排除邻居{neighbor_name}: 训练窗口内最长连续缺口={gap}个月"
-                  f"(超过{p.MAX_FILLABLE_GAP_MONTHS}个月阈值)，与本湖外生变量同一口径",
-                  flush=True)
+            print(
+                f"[{lake_name}] Excluding neighbour {neighbor_name}: "
+                f"longest training gap is {gap} months "
+                f"(limit={p.MAX_FILLABLE_GAP_MONTHS})",
+                flush=True,
+            )
             continue
         column = f"_neighbor_{neighbor_name}"
         cols[column] = aligned
@@ -263,22 +335,22 @@ def _load_neighbor_series(p, panel_deseason, neighbor_lags, lake_name):
     return cols, col_lags, kept
 
 
-@app.function(image=image, volumes={DATA_ROOT: volume}, timeout=3600, cpu=1.0, memory=2048)
+@app.function(image=image, volumes={DATA_ROOT: volume}, timeout=3600, cpu=1.0,
+              memory=2048, retries=2)
 def run_lake_synchrony_filtered(
     lake_name: str,
     xgb_params: dict,
     within_edges_records: list[dict],
     inter_edges_records: list[dict],
 ) -> dict:
-    """Run every forecasting method for one lake and save its shard.
-    运行单湖全部预测方法并保存分片。"""
+    """Run every forecasting method for one lake and return its result rows."""
     import pickle
     import pandas as pd
 
     p = _configure_module()
     pkl_path = os.path.join(p.PKL_DIR, f"{lake_name}_result.pkl")
     if not os.path.exists(pkl_path):
-        return {"lake": lake_name, "full_rows": [], "rolling_rows": [], "dm_rows": [], "selected_rows": []}
+        raise FileNotFoundError(f"Missing lake panel: {pkl_path}")
 
     within_edges = pd.DataFrame(within_edges_records)
     inter_edges = pd.DataFrame(inter_edges_records)
@@ -287,69 +359,91 @@ def run_lake_synchrony_filtered(
         cached = pickle.load(handle)
 
     clean_wide = p.clean_wide_wl(cached["wide_wl"], log_prefix=f"[{lake_name}] ")
-    combined_wl = p.combine_station_water_levels(clean_wide, method="anomaly_mean")
+    combined_wl = p.combine_station_water_levels(clean_wide)
     real_predictors = cached["real_predictors"]
-    _, panel_deseason = p.build_variable_panel(
+    panel_deseason = p.build_variable_panel(
         combined_wl,
         {column: real_predictors[column] for column in real_predictors.columns},
         forecast_horizon=p.FORECAST_HORIZON,
     )
     ccm_train_panel = panel_deseason.iloc[:-p.FORECAST_HORIZON]
-    # Load the authoritative parameters produced by the embedding stage. / 读取嵌入阶段生成的正式参数。
     embed_params = p.load_embed_params(lake_name)
 
     lake_edges = within_edges[within_edges["lake"] == lake_name].copy()
     G = p.build_new_causal_network(lake_edges)
-    # Re-select retained CCM edges within forecast-usable lags 1–12. / 在可用于预测的 1–12 月滞后内重新选择保留的 CCM 边。
     direct_lags = p.select_direct_predictor_lags(lake_edges)
-    for _v, _l in list(direct_lags.items()):
-        if _l < p.FORECAST_LAG_MIN:
-            _nl, _nr = p.forecast_constrained_lag(ccm_train_panel, _v, "WL", embed_params)
-            if _nl is None:
-                direct_lags.pop(_v)
-                print(f"[{lake_name}] {_v}→WL: 因果最优 d={_l}，预测域内无有效滞后，剔除", flush=True)
+    old_direct_lags = dict(direct_lags)
+    for variable, original_lag in list(direct_lags.items()):
+        if original_lag < p.FORECAST_LAG_MIN:
+            new_lag, new_rho = p.forecast_constrained_lag(
+                ccm_train_panel, variable, "WL", embed_params
+            )
+            if new_lag is None:
+                direct_lags.pop(variable)
+                print(
+                    f"[{lake_name}] {variable}->WL: causal optimum d={original_lag}; "
+                    "no valid forecast lag, excluded",
+                    flush=True,
+                )
             else:
-                direct_lags[_v] = _nl
-                print(f"[{lake_name}] {_v}→WL: 因果最优 d={_l} → 预测域最优 d={_nl} (rho={_nr:.3f})", flush=True)
-    # Apply the same forecast-lag constraint to ancestor predictors. / 对祖先预测变量应用相同的预测滞后约束。
+                direct_lags[variable] = new_lag
+                print(
+                    f"[{lake_name}] {variable}->WL: causal optimum d={original_lag}; "
+                    f"forecast optimum d={new_lag} (rho={new_rho:.3f})",
+                    flush=True,
+                )
+
     ancestor_lags = p.select_ancestor_lags(
         G, ccm_train_panel, embed_params, log_prefix=f"[{lake_name}] ")
-    # Baseline lags use training-only Pearson correlation, not CCM. / 基线滞后仅用训练期 Pearson 相关，不使用 CCM。
     all_var_lags = p.select_all_var_lags_xcorr(
         ccm_train_panel, embed_params, min_lag=1, log_prefix=f"[{lake_name}] ")
-    # Apply the long-gap rule before stepwise selection. / 逐步选择前先应用长缺口规则。
 
     neighbor_lags = p.load_neighbor_lags(inter_edges, lake_name)
-    # Re-select between-lake lags in the same 1–12 month forecast range. / 湖间边也在 1–12 月预测范围内重新选择滞后。
-    for _nb, _l in list(neighbor_lags.items()):
-        if _l < p.FORECAST_LAG_MIN:
+    old_neighbor_lags = dict(neighbor_lags)
+    for neighbor, original_lag in list(neighbor_lags.items()):
+        if original_lag < p.FORECAST_LAG_MIN:
             try:
-                _pnl, _, _emb_eff = p.load_pair_panel_for_connectivity(_nb, lake_name)
-                _nl, _nr = p.forecast_constrained_lag(
-                    _pnl, _nb, lake_name, {lake_name: _emb_eff})
-            except Exception as _exc:
-                _nl, _nr = None, float("nan")
-                print(f"[{lake_name}] 邻居 {_nb}: 预测域扫描失败 {type(_exc).__name__}", flush=True)
-            if _nl is None:
-                neighbor_lags.pop(_nb)
-                print(f"[{lake_name}] 邻居 {_nb}: 因果最优 d={_l}，预测域内无有效滞后，剔除", flush=True)
+                pair_panel, effect_embedding = p.load_pair_panel_for_connectivity(
+                    neighbor, lake_name
+                )
+                new_lag, new_rho = p.forecast_constrained_lag(
+                    pair_panel,
+                    neighbor,
+                    lake_name,
+                    {lake_name: effect_embedding},
+                )
+            except Exception as exc:
+                new_lag, new_rho = None, float("nan")
+                print(
+                    f"[{lake_name}] Neighbour {neighbor}: forecast-lag scan failed "
+                    f"with {type(exc).__name__}",
+                    flush=True,
+                )
+            if new_lag is None:
+                neighbor_lags.pop(neighbor)
+                print(
+                    f"[{lake_name}] Neighbour {neighbor}: causal optimum "
+                    f"d={original_lag}; no valid forecast lag, excluded",
+                    flush=True,
+                )
             else:
-                neighbor_lags[_nb] = _nl
-                print(f"[{lake_name}] 邻居 {_nb}: 因果最优 d={_l} → 预测域最优 d={_nl} (rho={_nr:.3f})", flush=True)
-    # Align neighbour series before measuring their gaps. / 对齐邻湖序列后再计算缺口。
+                neighbor_lags[neighbor] = new_lag
+                print(
+                    f"[{lake_name}] Neighbour {neighbor}: causal optimum "
+                    f"d={original_lag}; forecast optimum d={new_lag} "
+                    f"(rho={new_rho:.3f})",
+                    flush=True,
+                )
+
     neighbor_cols, neighbor_combined_lags, neighbor_lags = _load_neighbor_series(
         p, panel_deseason, neighbor_lags, lake_name)
 
-    old_direct_lags = _original_within_direct_lags(pd, lake_name)
-    old_neighbor_lags = _original_neighbor_lags(pd, lake_name)
-
-    # Apply one long-gap rule to every strategy before selection. / 所有策略在变量选择前统一应用长缺口规则。
     lag_sets = {
         "direct": direct_lags,
         "ancestors": ancestor_lags,
         "all_vars": all_var_lags,
     }
-    lag_sets, long_gap_vars = _filter_long_gap_vars(
+    lag_sets = _filter_long_gap_vars(
         p, panel_deseason, lag_sets, lake_name)
     direct_lags = lag_sets["direct"]
     ancestor_lags = lag_sets["ancestors"]
@@ -389,7 +483,7 @@ def run_lake_synchrony_filtered(
     methods = {}
     method_exog_lags = {}
 
-    # Baselines and CCM methods share one panel and one XGBoost configuration. / 基线与 CCM 方法共用同一面板和 XGBoost 参数。
+    # All methods use the same panel and global XGBoost configuration.
     methods["SARIMA"] = lambda: p.fit_auto_sarima(wl_series, test_size=p.FORECAST_HORIZON)
     method_exog_lags["SARIMA"] = None
     methods["Persistence"] = lambda: p.fit_persistence(wl_series, test_size=p.FORECAST_HORIZON)
@@ -413,7 +507,11 @@ def run_lake_synchrony_filtered(
             test_size=p.FORECAST_HORIZON
         )
         methods["XGBoost_CCM_direct"] = lambda: p.fit_xgboost_multi(
-            wl_series, panel_deseason[list(direct_lags)], direct_lags, xgb_params, test_size=p.FORECAST_HORIZON
+            wl_series,
+            panel_deseason[list(direct_lags)],
+            direct_lags,
+            xgb_params,
+            test_size=p.FORECAST_HORIZON,
         )
         method_exog_lags["SARIMAX_CCM_direct"] = direct_lags
         method_exog_lags["XGBoost_CCM_direct"] = direct_lags
@@ -424,7 +522,11 @@ def run_lake_synchrony_filtered(
             test_size=p.FORECAST_HORIZON
         )
         methods["XGBoost_CCM_ancestors"] = lambda: p.fit_xgboost_multi(
-            wl_series, panel_deseason[list(ancestor_lags)], ancestor_lags, xgb_params, test_size=p.FORECAST_HORIZON
+            wl_series,
+            panel_deseason[list(ancestor_lags)],
+            ancestor_lags,
+            xgb_params,
+            test_size=p.FORECAST_HORIZON,
         )
         method_exog_lags["SARIMAX_CCM_ancestors"] = ancestor_lags
         method_exog_lags["XGBoost_CCM_ancestors"] = ancestor_lags
@@ -435,83 +537,52 @@ def run_lake_synchrony_filtered(
             test_size=p.FORECAST_HORIZON
         )
         methods["XGBoost_Stepwise"] = lambda: p.fit_xgboost_multi(
-            wl_series, panel_deseason[list(stepwise_lags)], stepwise_lags, xgb_params, test_size=p.FORECAST_HORIZON
+            wl_series,
+            panel_deseason[list(stepwise_lags)],
+            stepwise_lags,
+            xgb_params,
+            test_size=p.FORECAST_HORIZON,
         )
         method_exog_lags["SARIMAX_Stepwise"] = stepwise_lags
         method_exog_lags["XGBoost_Stepwise"] = stepwise_lags
 
     if neighbor_lags and ancestor_lags:
-        # Neighbour inputs are already aligned and gap-filtered. / 邻湖输入已完成对齐与缺口筛选。
-        if neighbor_cols:
-            neighbor_panel = pd.DataFrame(neighbor_cols)
-            combined_exog = pd.concat([panel_deseason[list(ancestor_lags)], neighbor_panel], axis=1)
-            combined_lags = {**ancestor_lags, **neighbor_combined_lags}
-            methods["SARIMAX_CCM_neighbor"] = lambda: p.fit_auto_sarimax_multi(
-                wl_series, combined_exog, combined_lags,
-                test_size=p.FORECAST_HORIZON
-            )
-            methods["XGBoost_CCM_neighbor"] = lambda: p.fit_xgboost_multi(
-                wl_series, combined_exog, combined_lags, xgb_params, test_size=p.FORECAST_HORIZON
-            )
-            method_exog_lags["SARIMAX_CCM_neighbor"] = combined_lags
-            method_exog_lags["XGBoost_CCM_neighbor"] = combined_lags
-            selected_rows.append({
-                "lake": lake_name,
-                "method": "CCM_neighbor",
-                "selected_vars": ",".join(sorted(neighbor_lags)),
-                "selected_lags": _json_dict(neighbor_combined_lags),
-                "old_direct_lags": _json_dict(old_direct_lags),
-                "new_direct_lags": _json_dict(direct_lags),
-                "old_neighbor_lags": _json_dict(old_neighbor_lags),
-                "new_neighbor_lags": _json_dict(neighbor_lags),
-            })
+        neighbor_panel = pd.DataFrame(neighbor_cols)
+        combined_exog = pd.concat(
+            [panel_deseason[list(ancestor_lags)], neighbor_panel], axis=1
+        )
+        combined_lags = {**ancestor_lags, **neighbor_combined_lags}
+        methods["SARIMAX_CCM_neighbor"] = lambda: p.fit_auto_sarimax_multi(
+            wl_series,
+            combined_exog,
+            combined_lags,
+            test_size=p.FORECAST_HORIZON,
+        )
+        methods["XGBoost_CCM_neighbor"] = lambda: p.fit_xgboost_multi(
+            wl_series,
+            combined_exog,
+            combined_lags,
+            xgb_params,
+            test_size=p.FORECAST_HORIZON,
+        )
+        method_exog_lags["SARIMAX_CCM_neighbor"] = combined_lags
+        method_exog_lags["XGBoost_CCM_neighbor"] = combined_lags
+        selected_rows.append({
+            "lake": lake_name,
+            "method": "CCM_neighbor",
+            "selected_vars": ",".join(sorted(neighbor_lags)),
+            "selected_lags": _json_dict(neighbor_combined_lags),
+            "old_direct_lags": _json_dict(old_direct_lags),
+            "new_direct_lags": _json_dict(direct_lags),
+            "old_neighbor_lags": _json_dict(old_neighbor_lags),
+            "new_neighbor_lags": _json_dict(neighbor_lags),
+        })
 
     full_rows, rolling_rows, dm_rows = [], [], []
     rolling_results = {}
     for name, fit_fn in methods.items():
         try:
             result = fit_fn()
-            used_lags = method_exog_lags[name]
-            min_exog_lag = min(used_lags.values()) if used_lags else None
-            free_months = p.FORECAST_HORIZON if min_exog_lag is None else min(min_exog_lag, p.FORECAST_HORIZON)
-            full_rows.append({
-                "lake": lake_name,
-                "method": name,
-                "rmse": result["rmse"],
-                "mae": result["mae"],
-                "nse": result["nse"],
-                "pbias": result.get("pbias"),
-                "n_eval": result["n_eval"],
-                # Baselines without exogenous variables have no lag map. / 无外生变量基线没有滞后映射。
-                "n_selected_vars": len(used_lags) if used_lags else 0,
-                # Record fitted ARIMA orders for reproducibility checks. / 记录实际 ARIMA 阶数以便复现核对。
-                "arima_order": str(result.get("order")) if "order" in result else None,
-                "arima_seasonal_order": (str(result.get("seasonal_order"))
-                                         if "seasonal_order" in result else None),
-                "min_exog_lag": min_exog_lag,
-                "n_foresight_free_months": free_months,
-                "frac_foresight_free": free_months / p.FORECAST_HORIZON,
-            })
-            # Persistence uses its dedicated rolling evaluator. / 持续性方法使用专用滚动评估函数。
-            if name.startswith("XGBoost"):
-                rolling = p.rolling_origin_xgb(result)
-            elif name == "Persistence":
-                rolling = p.rolling_origin_persistence(wl_series, test_size=p.FORECAST_HORIZON)
-            else:                                     # SARIMA or SARIMAX / SARIMA 或 SARIMAX
-                rolling = p.rolling_origin_sarimax(result, wl_series, test_size=p.FORECAST_HORIZON)
-            rolling_results[name] = rolling
-            for horizon, metrics in rolling.items():
-                rolling_rows.append({
-                    "lake": lake_name,
-                    "method": name,
-                    "horizon_months": horizon,
-                    "rmse": metrics["rmse"],
-                    "mae": metrics["mae"],
-                    "nse": metrics["nse"],
-                    "n_origins": metrics["n_origins"],
-                    "min_exog_lag": min_exog_lag,
-                    "requires_foresight": min_exog_lag is not None and horizon > min_exog_lag,
-                })
         except Exception as exc:
             full_rows.append({
                 "lake": lake_name,
@@ -519,25 +590,85 @@ def run_lake_synchrony_filtered(
                 "status": f"ERROR: {type(exc).__name__}: {exc}",
             })
             print(f"[{lake_name}] {name} failed: {type(exc).__name__}: {exc}", flush=True)
+            continue
 
-    # Predefined comparisons cover CCM strategies and their baselines. / 预设比较覆盖 CCM 策略及其基线。
+        used_lags = method_exog_lags[name]
+        min_exog_lag = min(used_lags.values()) if used_lags else None
+        free_months = (
+            p.FORECAST_HORIZON
+            if min_exog_lag is None
+            else min(min_exog_lag, p.FORECAST_HORIZON)
+        )
+        full_rows.append({
+            "lake": lake_name,
+            "method": name,
+            "rmse": result["rmse"],
+            "mae": result["mae"],
+            "nse": result["nse"],
+            "pbias": result.get("pbias"),
+            "n_eval": result["n_eval"],
+            "n_selected_vars": len(used_lags) if used_lags else 0,
+            "arima_order": str(result.get("order")) if "order" in result else None,
+            "arima_seasonal_order": (
+                str(result.get("seasonal_order"))
+                if "seasonal_order" in result else None
+            ),
+            "min_exog_lag": min_exog_lag,
+            "n_foresight_free_months": free_months,
+            "frac_foresight_free": free_months / p.FORECAST_HORIZON,
+        })
+
+        try:
+            if name.startswith("XGBoost"):
+                rolling = p.rolling_origin_xgb(result)
+            elif name == "Persistence":
+                rolling = p.rolling_origin_persistence(
+                    wl_series, test_size=p.FORECAST_HORIZON
+                )
+            else:
+                rolling = p.rolling_origin_sarimax(
+                    result, wl_series, test_size=p.FORECAST_HORIZON
+                )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Rolling evaluation failed for {lake_name}/{name}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        rolling_results[name] = rolling
+        for horizon, metrics in rolling.items():
+            rolling_rows.append({
+                "lake": lake_name,
+                "method": name,
+                "horizon_months": horizon,
+                "rmse": metrics["rmse"],
+                "mae": metrics["mae"],
+                "nse": metrics["nse"],
+                "n_origins": metrics["n_origins"],
+                "min_exog_lag": min_exog_lag,
+                "requires_foresight": (
+                    min_exog_lag is not None and horizon > min_exog_lag
+                ),
+            })
+
+    # Predefined comparisons cover CCM strategies and their baselines.
     comparisons = [
-        # Between CCM strategies / CCM 策略之间
+        # Between CCM strategies.
         ("XGBoost_CCM_ancestors", "XGBoost_CCM_direct"),
         ("SARIMAX_CCM_ancestors", "SARIMAX_CCM_direct"),
         ("XGBoost_CCM_neighbor", "XGBoost_CCM_ancestors"),
         ("SARIMAX_CCM_neighbor", "SARIMAX_CCM_ancestors"),
-        # Against statistical selection / 与统计变量选择比较
+        # Against statistical selection.
         ("XGBoost_CCM_ancestors", "XGBoost_Stepwise"),
         ("SARIMAX_CCM_ancestors", "SARIMAX_Stepwise"),
-        # Against unfiltered or no-exogenous baselines / 与不筛选或无外生变量基线比较
+        # Against unfiltered or no-exogenous baselines.
         ("XGBoost_CCM_ancestors", "XGBoost_AR_only"),
         ("XGBoost_CCM_ancestors", "Persistence"),
         ("XGBoost_CCM_ancestors", "XGBoost_all_vars"),
         ("XGBoost_CCM_direct", "XGBoost_AR_only"),
         ("SARIMAX_CCM_ancestors", "SARIMA"),
         ("SARIMAX_CCM_ancestors", "Persistence"),
-        # Across model families / 跨模型族
+        # Across model families.
         ("XGBoost_CCM_ancestors", "SARIMAX_CCM_ancestors"),
         ("XGBoost_all_vars", "SARIMAX_all_vars"),
     ]
@@ -576,17 +707,8 @@ def run_lake_synchrony_filtered(
     }
 
 
-@app.function(image=image, volumes={DATA_ROOT: volume}, timeout=1800, cpu=1.0, memory=2048)
-def tune_hyperparams() -> dict:
-    """Return the fixed global XGBoost parameters used by this experiment.
-    返回本实验使用的固定全局 XGBoost 参数。"""
-    p = _configure_module()
-    return p.tune_xgboost_hyperparams(p.LAKES)
-
-
 def _apply_dm_fdr(dm_df):
-    """Apply BH-FDR to valid Diebold-Mariano comparisons.
-    对有效 Diebold–Mariano 比较应用 BH-FDR。"""
+    """Apply BH-FDR to valid Diebold-Mariano comparisons."""
     from statsmodels.stats.multitest import multipletests
 
     if dm_df.empty or "p_value" not in dm_df.columns:
@@ -597,18 +719,19 @@ def _apply_dm_fdr(dm_df):
     if valid.any():
         dm_df.loc[valid, "p_fdr"] = multipletests(
             dm_df.loc[valid, "p_value"], alpha=0.05, method="fdr_bh")[1]
-        print(f"DM 检验 BH-FDR：{int(valid.sum())} 个检验作一族，"
-              f"未校正 p<0.05 有 {int((dm_df.loc[valid, 'p_value'] < 0.05).sum())} 个，"
-              f"校正后 {int((dm_df.loc[valid, 'p_fdr'] < 0.05).sum())} 个",
-              flush=True)
+        print(
+            f"DM BH-FDR family: {int(valid.sum())} tests; "
+            f"uncorrected p<0.05: "
+            f"{int((dm_df.loc[valid, 'p_value'] < 0.05).sum())}; "
+            f"adjusted p<0.05: "
+            f"{int((dm_df.loc[valid, 'p_fdr'] < 0.05).sum())}",
+            flush=True,
+        )
     return dm_df
 
 
-# Server-side orchestration persists one shard per lake for resume support. / 服务端编排按湖保存分片以支持续跑。
-
 def _jsonable(obj):
-    """Convert NumPy and missing values to JSON-safe Python values.
-    将 NumPy 与缺测值转换为可写入 JSON 的 Python 值。"""
+    """Convert NumPy and missing values to JSON-safe Python values."""
     import numpy as np
     if isinstance(obj, np.integer):
         return int(obj)
@@ -622,54 +745,107 @@ def _jsonable(obj):
 @app.function(image=image, volumes={DATA_ROOT: volume},
               timeout=10 * 3600, cpu=1.0, memory=4096, retries=2)
 def orchestrate() -> dict:
-    """Run or resume all lake shards and merge complete outputs.
-    运行或续跑全部湖泊分片，并合并完整结果。"""
+    """Run or resume all lake shards and merge only the complete result set."""
     import pandas as pd
 
     p = _configure_module()
-    volume.reload()                      # Load previously committed shards. / 读取此前已提交分片。
+    volume.reload()
+    within_input, inter_input = _load_forecast_inputs(pd)
+    within_edges = _filtered_within_edges(pd, within_input)
+    inter_edges = _filtered_interlake_edges(pd, inter_input)
+    print(
+        f"Retained within-lake edges: {len(within_edges)} | "
+        f"retained between-lake edges: {len(inter_edges)}",
+        flush=True,
+    )
 
-    within_edges = _filtered_within_edges(pd, WITHIN_ORIGINAL_INPUT)
-    inter_edges = _filtered_interlake_edges(pd, INTER_ORIGINAL_INPUT)
-    print(f"within edges={len(within_edges)}  inter edges={len(inter_edges)}", flush=True)
+    os.makedirs(SHARD_DIR, exist_ok=True)
+    present = set(_existing_shards())
+    unexpected = sorted(present - EXPECTED_SHARDS)
+    if unexpected:
+        raise RuntimeError(
+            f"Forecast shard directory contains {len(unexpected)} unexpected file(s): "
+            f"{', '.join(unexpected[:5])}"
+        )
+
+    done = set()
+    for lake_name in LAKES:
+        if f"{lake_name}.json" not in present:
+            continue
+        try:
+            _load_lake_shard(lake_name)
+        except Exception as exc:
+            print(
+                f"Ignoring invalid shard for {lake_name}; it will be recomputed: {exc}",
+                flush=True,
+            )
+        else:
+            done.add(lake_name)
+
+    todo = [lake_name for lake_name in LAKES if lake_name not in done]
+    print(
+        f"Forecast lakes: {len(LAKES)} | completed: {len(done)} | "
+        f"remaining: {len(todo)}",
+        flush=True,
+    )
 
     print("Tuning XGBoost hyperparameters once globally...", flush=True)
-    xgb_params = p.tune_xgboost_hyperparams(FORECAST_LAKES)
+    xgb_params, tuning_rows = p.tune_xgboost_hyperparams(
+        LAKES,
+        return_report=True,
+    )
+    tuning = pd.DataFrame(tuning_rows)
+    if len(tuning) != len(p.XGB_PARAM_GRID) or int(tuning["selected"].sum()) != 1:
+        raise RuntimeError("XGBoost tuning did not return one row per candidate")
+    tuning_path = f"{OUT_DIR}/{TUNING_OUTPUT_NAME}"
+    tuning.to_csv(tuning_path, index=False)
+    volume.commit()
     print(f"Selected XGBoost parameters: {xgb_params}", flush=True)
-
-    out_dir_remote = OUT_DIR
-    shard_dir = f"{OUT_DIR}/forecast_shards"
-    os.makedirs(shard_dir, exist_ok=True)
-    os.makedirs(out_dir_remote, exist_ok=True)
-
-    done = {n[:-5] for n in os.listdir(shard_dir) if n.endswith(".json")}
-    todo = [lk for lk in FORECAST_LAKES if lk not in done]
-    print(f"\n=== 已完成 {len(done)}｜待跑 {len(todo)} ===", flush=True)
+    print(f"Wrote {tuning_path} ({len(tuning)} rows)", flush=True)
 
     if todo:
-        results = list(run_lake_synchrony_filtered.map(
+        results = run_lake_synchrony_filtered.map(
             todo,
             [xgb_params] * len(todo),
             [within_edges.to_dict("records")] * len(todo),
             [inter_edges.to_dict("records")] * len(todo),
             return_exceptions=True,
-        ))
+        )
         for lake, result in zip(todo, results):
             if isinstance(result, Exception):
                 print(f"  [FAIL] {lake}: {type(result).__name__}: {result}", flush=True)
                 continue
-            with open(f"{shard_dir}/{lake}.json", "w", encoding="utf-8") as fh:
-                json.dump(result, fh, ensure_ascii=False, default=_jsonable)
-            volume.commit()          # Persist after each lake. / 每个湖完成后立即持久化。
+            _validate_lake_shard(lake, result)
+            with open(_shard_path(lake), "w", encoding="utf-8") as handle:
+                json.dump(result, handle, ensure_ascii=False, default=_jsonable)
+            volume.commit()
             print(f"  [OK] {lake}", flush=True)
 
-    rows = {"full_rows": [], "rolling_rows": [], "dm_rows": [], "selected_rows": []}
-    present = sorted(n for n in os.listdir(shard_dir) if n.endswith(".json"))
-    for name in present:
-        with open(f"{shard_dir}/{name}", encoding="utf-8") as fh:
-            shard = json.load(fh)
+    present = set(_existing_shards())
+    missing = sorted(EXPECTED_SHARDS - present)
+    unexpected = sorted(present - EXPECTED_SHARDS)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(
+                f"missing {len(missing)} shard(s), for example: {', '.join(missing[:5])}"
+            )
+        if unexpected:
+            details.append(
+                f"found {len(unexpected)} unexpected shard(s), for example: "
+                f"{', '.join(unexpected[:5])}"
+            )
+        raise RuntimeError(
+            "Cannot merge forecasting outputs: expected exactly ten lake shards; "
+            + "; ".join(details)
+        )
+
+    rows = {key: [] for key in SHARD_ROW_KEYS}
+    for filename in sorted(EXPECTED_SHARDS):
+        lake_name = filename[:-5]
+        shard = _load_lake_shard(lake_name)
         for key in rows:
-            rows[key].extend(shard.get(key, []))
+            rows[key].extend(shard[key])
 
     outputs = {
         "full": pd.DataFrame(rows["full_rows"]),
@@ -678,24 +854,22 @@ def orchestrate() -> dict:
         "selected": pd.DataFrame(rows["selected_rows"]),
     }
     for key, frame in outputs.items():
-        path = f"{out_dir_remote}/{OUTPUT_NAMES[key]}"
+        path = f"{OUT_DIR}/{OUTPUT_NAMES[key]}"
         frame.to_csv(path, index=False)
-        print(f"  wrote {path} ({len(frame)} rows)", flush=True)
+        print(f"Wrote {path} ({len(frame)} rows)", flush=True)
     volume.commit()
 
-    summary = {"lakes_done": len(present),
-               **{k: len(v) for k, v in outputs.items()}}
-    print(f"=== 完成：{summary} ===", flush=True)
+    summary = {
+        "lakes_done": len(LAKES),
+        "tuning": len(tuning),
+        **{key: len(frame) for key, frame in outputs.items()},
+    }
+    print(f"Forecasting completed: {summary}", flush=True)
     return summary
 
 
 @app.local_entrypoint()
 def detached():
-    """Start server-side orchestration and return immediately.
-    启动服务端编排并立即返回。"""
+    """Start server-side orchestration and return immediately."""
     call = orchestrate.spawn()
-    print("已提交服务端编排")
-    print(f"call id: {call.object_id}")
-    print("本机现在可以关机。查看进度：modal app logs（或 Modal 网页控制台）")
-    print("跑完取回结果：")
-    print("  modal volume get ccm-data lake_results/final_v3/forecast_synchrony_filtered_full_results.csv results/")
+    print(f"Submitted forecasting orchestration: {call.object_id}")
