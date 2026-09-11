@@ -1,8 +1,8 @@
 # Lake Level CCM Modal Reproduction
 
 This repository provides the code, execution instructions and reference outputs
-for the MSc dissertation *Causal Exploration and Predictability of Lake Water
-Level: Evidence from Two Regulated Canadian River Basins*.
+for the MSc dissertation Causal Exploration and Predictability of Lake Water
+Level: Evidence from Two Regulated Canadian River Basins.
 
 This README is the technical guide for environment setup, input preparation,
 execution, output download and verification.
@@ -413,10 +413,10 @@ dataset/           public derived dataset and data dictionary
 
 The report-aligned outputs are:
 
-- Figures 3.1, 4.1, 4.2, 4.3, 4.4 and B1;
-- Table 4.1;
-- Appendix Tables A1–A2, B1–B5 and C1–C4; and
-- the public derived dataset.
+1. Figures 3.1, 4.1, 4.2, 4.3, 4.4 and B1;
+2. Table 4.1;
+3. Appendix Tables A1–A2, B1–B5 and C1–C4; 
+4. the public derived dataset.
 
 `figure_4_3_interlake_network.py` renders both Figure 4.3 and Figure 4.4.
 
